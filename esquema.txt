@@ -1,0 +1,45 @@
+==============================================================
+ESQUEMA DE ARQUITECTURA Y FUNCIONAMIENTO - AUTENTICACIÓN CONTINUA
+==============================================================
+
+1. PROPÓSITO GENERAL
+La aplicación móvil tiene como objetivo autenticar al usuario de manera continua en segundo plano basándose en su biometría de comportamiento (movimiento del dispositivo capturado por los sensores). Además, protege la privacidad de los datos utilizando Aprendizaje Federado (Federated Learning), entrenando el modelo biométrico localmente en el dispositivo sin enviar los datos crudos al servidor.
+
+2. CAPAS Y MÓDULOS PRINCIPALES
+
+A. Recolección de Datos (Data Collection)
+- DataCollectionService: Un Foreground Service de Android encargado de leer de manera constante los datos de los sensores (acelerómetro, giroscopio).
+- WindowSegmenter: Toma los flujos de datos continuos de los sensores y los agrupa en "ventanas" (windows) de un tamaño fijo (por ejemplo, 128 muestras x 6 ejes) preparadas para ser consumidas por el modelo de ML.
+
+B. Machine Learning Local (TensorFlow Lite)
+- TFLiteModelManager: Administra el ciclo de vida del modelo TFLite (`startModel.tflite`). Permite realizar inferencias (obtener la puntuación de si el usuario es genuino o no) y ejecutar entrenamiento On-Device (firmas `infer`, `train`, `parameters`, `restore`).
+- LocalTrainer: Orquesta el entrenamiento de una época a nivel local. Recibe las ventanas positivas (del usuario real), genera "negativos sintéticos" (variaciones ruidosas/desordenadas temporalmente) y entrena el modelo para que aprenda a diferenciar al dueño del dispositivo de un impostor.
+
+C. Aprendizaje Federado (Comunicación con el Servidor)
+- FlowerGrpcClient: Cliente gRPC que se conecta al servidor de Flower (AWS EC2). Recibe instrucciones (`FIT_INS`, `EVALUATE_INS`, `GET_PARAMETERS_INS`) y responde con los pesos actualizados o las métricas de evaluación del modelo.
+- FederatedLearningService: Servicio en segundo plano para orquestar la conexión de la sesión de federación y delegar el flujo de entrenamiento sin bloquear la interfaz.
+- ModelInfoFetcher: Realiza peticiones HTTP (REST) previas para obtener la configuración base (ej. ventana de sensores) antes de iniciar la sesión gRPC.
+
+D. Monitoreo de Rendimiento y Telemetría
+- BatteryMonitor & RamMonitor: Rastrea el consumo de batería y los picos de uso de RAM durante los procesos computacionalmente costosos (como el entrenamiento y la evaluación local).
+- ResourceMeasurementRepository: Almacena estos registros en una base de datos local (probablemente Room) para análisis posterior.
+
+E. Interfaz de Usuario y Arquitectura Base
+- UI: Construida con Jetpack Compose (Compose enabled en build.gradle).
+- FederatedViewModel: Sirve de puente entre la vista (UI) y los procesos de fondo de federación, reportando estados ("Entrenando...", "Conectado...").
+- Koin (DI): Maneja la inyección de dependencias centralizada (`AppModule`, `MlModule`, `FederatedModule`), inicializada en la clase base `App` que extiende de `Application`.
+
+3. FLUJO DE TRABAJO TÍPICO (Sesión FL)
+1. Arranque: La app arranca e inicia la recolección pasiva de sensores (`DataCollectionService`).
+2. Configuración: `ModelInfoFetcher` consulta al backend REST las configuraciones actuales del modelo.
+3. Conexión FL: `FlowerGrpcClient` abre un canal gRPC con el servidor.
+4. Distribución de Pesos: El servidor solicita u otorga los parámetros globales actuales.
+5. Entrenamiento Local (FIT): 
+   - El cliente recibe los parámetros.
+   - `WindowSegmenter` provee datos recolectados.
+   - `LocalTrainer` genera negativos sintéticos y entrena el modelo TFLite.
+   - Se envían los pesos actualizados de regreso al servidor junto con el tamaño de muestra y métricas.
+6. Evaluación (EVALUATE): Se mide localmente la métrica EER (Equal Error Rate) con los datos y se envía el reporte al servidor.
+7. Monitoreo: Se registran en la base de datos local los gastos de batería y memoria incurridos durante la ronda.
+
+==============================================================

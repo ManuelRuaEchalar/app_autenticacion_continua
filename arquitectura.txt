@@ -1,0 +1,71 @@
+Documentación de Arquitectura y Funcionamiento: Autenticación Continua
+====================================================================
+
+1. DESCRIPCIÓN GENERAL
+-----------------------
+La aplicación "Autenticación Continua" tiene como propósito recolectar de forma invisible (en segundo plano) datos inerciales del dispositivo móvil (acelerómetro y giroscopio) mientras el usuario interactúa con él de forma natural. 
+Su objetivo final es utilizar esta información biométrica conductual (la manera en que el usuario sostiene y mueve el teléfono) para fines de autenticación continua.
+
+
+2. ARQUITECTURA DE SOFTWARE (Clean Architecture + MVVM)
+--------------------------------------------------------
+La aplicación está construida utilizando principios de Clean Architecture y el patrón Model-View-ViewModel (MVVM) recomendado por Google, garantizando alta cohesión, bajo acoplamiento (SOLID) y alta testabilidad. El proyecto se divide en las siguientes capas:
+
+A) Capa de Dominio (Domain)
+   - Es el núcleo de la aplicación, no depende de ninguna librería de Android específica.
+   - Contiene los modelos de negocio (`AccelerometerData`, `GyroscopeData`, `DailySessionStat`).
+   - Define las interfaces o contratos para los repositorios (`IAccelerometerRepository`, `IGyroscopeRepository`), los sensores (`IAccelerometerSensor`, `IGyroscopeSensor`) y los servicios de negocio (`ISessionManager`, `IDataExportService`).
+
+B) Capa de Datos (Data)
+   - Implementa los contratos definidos en el Dominio para acceder y persistir datos.
+   - Base de Datos Local: Utiliza la librería "Room" (SQLite abstraído). Contiene los DAOs (Data Access Objects) y las Entidades para Acelerómetro, Giroscopio y Estadísticas de Sesión.
+   - Repositorios: `AccelerometerRepositoryImpl` y `GyroscopeRepositoryImpl` gestionan la inserción y recuperación masiva de datos en subprocesos de entrada/salida (Corrutinas de Kotlin).
+
+C) Capa de Dispositivo (Device / Infraestructura)
+   - Implementa los contratos del Dominio relacionados con el hardware.
+   - Sensores: `AccelerometerSensorImpl` y `GyroscopeSensorImpl` acceden al `SensorManager` de Android para suscribirse a los eventos físicos a 50Hz.
+   - Receivers: Un `BootReceiver` opcional para iniciar servicios automáticamente al encender el móvil.
+
+D) Capa de Presentación (Presentation & UI)
+   - MVVM: `MainViewModel` gestiona la lógica de la interfaz. Expone un estado reactivo (`UiState` a través de un `StateFlow`) que la vista observa.
+   - Interfaz Gráfica: Construida completamente con "Jetpack Compose" de forma declarativa. `MainActivity` se encarga de mostrar tarjetas interactivas de resumen, tablas de datos diarios, y el botón para exportar.
+
+E) Capa de Servicios y Configuración (Service & DI)
+   - `DataCollectionService`: Es un Foreground Service (Servicio en primer plano) de Android que mantiene vivo el proceso de recolección de datos incluso si la app se cierra.
+   - Inyección de Dependencias (DI): Utiliza la librería "Koin" (`AppModule`) para instanciar e inyectar todas las dependencias en tiempo de ejecución de manera limpia.
+
+
+3. FUNCIONAMIENTO Y FLUJO DE LA APLICACIÓN
+-------------------------------------------
+1. Inicialización: 
+   Al abrir la app, la `MainActivity` verifica los permisos (como notificaciones) e inicia el `DataCollectionService`.
+
+2. Gestión de Sesión (`SessionManagerImpl`):
+   El servicio delega la lógica de negocio al Session Manager.
+   - Detecta si la pantalla está encendida.
+   - Monitorea el uso. Espera un periodo inicial (ej. 2 minutos de uso continuo) para asegurar que el usuario está interactuando realmente con el teléfono.
+   - Luego pasa a estado `RECORDING` y comienza a suscribirse a los eventos de `IAccelerometerSensor` y `IGyroscopeSensor`.
+
+3. Recolección y Guardado:
+   - Los sensores emiten datos (coordenadas X, Y, Z y un timestamp).
+   - El servicio recibe estos datos y periódicamente (usando Corrutinas en hilo de IO) se envían a los repositorios que a su vez insertan de forma masiva en Room (Base de Datos Local).
+   - Existe un límite de recolección diaria (por ejemplo, 15 minutos al día) para no agotar la batería ni llenar el almacenamiento rápidamente. Una vez alcanzado el límite, entra en estado `DAILY_LIMIT_REACHED`.
+
+4. Visualización e Interfaz:
+   - El usuario abre la app y observa su "Progreso del Día".
+   - Puede ver el peso de la base de datos (DB Size) actualizado en tiempo real.
+   - Puede expandir las fechas anteriores para ver las primeras muestras tabuladas de Acelerómetro y Giroscopio.
+
+5. Exportación de Datos:
+   - El usuario pulsa el botón "Exportar datos a CSV".
+   - La app utiliza el "Storage Access Framework" para preguntarle al usuario dónde desea guardar el archivo.
+   - `DataExportServiceImpl` recopila toda la base de datos, lo convierte en formato CSV y lo transmite mediante un flujo de escritura al archivo seleccionado.
+
+
+4. PRINCIPIOS SOLID APLICADOS
+------------------------------
+- Single Responsibility Principle (SRP): Cada clase tiene un único propósito. Por ejemplo, `DataExportServiceImpl` solo exporta a CSV, no sabe cómo se guarda en la UI ni en BD.
+- Open/Closed Principle (OCP): Es fácil agregar nuevos sensores (por ejemplo magnetómetro) creando un nuevo `ISensor` sin modificar el `SessionManager` existente.
+- Liskov Substitution Principle (LSP): La app usa interfaces para todo; un repositorio en memoria podría sustituir a Room sin que el ViewModel lo note.
+- Interface Segregation Principle (ISP): Los contratos del dominio (Interfaces) son específicos. `IAccelerometerRepository` solo trata con acelerómetro.
+- Dependency Inversion Principle (DIP): Los módulos de alto nivel (como ViewModel o Services) no dependen de implementaciones de bajo nivel (Room o SensorManager), dependen únicamente de abstracciones (interfaces inyectadas por Koin).

@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package flwr.proto;
+
+option java_package = "flwr.android_client";
+option java_multiple_files = true;
+
+// -------------------------------------------------------------------------
+// Transport
+// -------------------------------------------------------------------------
+
+service FlowerService {
+    rpc Join(stream ClientMessage) returns (stream ServerMessage) {}
+}
+
+// -------------------------------------------------------------------------
+// ServerMessage
+// -------------------------------------------------------------------------
+
+message ServerMessage {
+    oneof msg {
+        GetPropertiesIns get_properties_ins = 1;
+        GetParametersIns get_parameters_ins = 2;
+        FitIns fit_ins = 3;
+        EvaluateIns evaluate_ins = 4;
+    }
+}
+
+message GetPropertiesIns {
+    Properties config = 1;
+}
+
+message GetParametersIns {
+    Properties config = 1;
+}
+
+message FitIns {
+    Parameters parameters = 1;
+    Properties config = 2;
+}
+
+message EvaluateIns {
+    Parameters parameters = 1;
+    Properties config = 2;
+}
+
+// -------------------------------------------------------------------------
+// ClientMessage
+// -------------------------------------------------------------------------
+
+message ClientMessage {
+    oneof msg {
+        DisconnectRes disconnect_res = 1;
+        GetPropertiesRes get_properties_res = 2;
+        GetParametersRes get_parameters_res = 3;
+        FitRes fit_res = 4;
+        EvaluateRes evaluate_res = 5;
+    }
+}
+
+message DisconnectRes {
+    string reason = 1;
+}
+
+message GetPropertiesRes {
+    Status status = 1;
+    Properties properties = 2;
+}
+
+message GetParametersRes {
+    Status status = 1;
+    Parameters parameters = 2;
+}
+
+message FitRes {
+    Status status = 1;
+    Parameters parameters = 2;
+    int64 num_examples = 3;
+    Properties metrics = 4;
+}
+
+message EvaluateRes {
+    Status status = 1;
+    float loss = 2;
+    int64 num_examples = 3;
+    Properties metrics = 4;
+}
+
+// -------------------------------------------------------------------------
+// Common
+// -------------------------------------------------------------------------
+
+message Parameters {
+    repeated bytes tensors = 1;
+    string tensor_type = 2;
+}
+
+message Status {
+    enum Code {
+        OK = 0;
+        GET_PROPERTIES_NOT_IMPLEMENTED = 1;
+        GET_PARAMETERS_NOT_IMPLEMENTED = 2;
+        FIT_NOT_IMPLEMENTED = 3;
+        EVALUATE_NOT_IMPLEMENTED = 4;
+    }
+    Code code = 1;
+    string message = 2;
+}
+
+message Properties {
+    map<string, Scalar> properties = 1;
+}
+
+message Scalar {
+    oneof scalar {
+        double double = 1;
+        int64 sint64 = 2;
+        bool bool = 3;
+        string string = 4;
+        bytes bytes = 5;
+    }
+}
