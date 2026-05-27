@@ -25,8 +25,7 @@ class TFLiteModelManager(private val context: Context) {
             interpreter = Interpreter(modelBuffer, options)
             interpreter?.allocateTensors()
             
-            val outputs = mutableMapOf<String, Any>()
-            interpreter?.runSignature(emptyMap<String, Any>(), outputs, "initialize")
+            initializeModelVariables()
         } catch (e: Exception) {
             initializationError = "Error cargando modelo: ${e.message}. Asegúrate de colocar startModel.tflite en app/src/main/assets/"
         }
@@ -156,5 +155,12 @@ class TFLiteModelManager(private val context: Context) {
     fun close() {
         interpreter?.close()
         interpreter = null
+    }
+
+    private fun initializeModelVariables() {
+        val outputs = mutableMapOf<String, Any>(
+            "status" to Array(1) { IntArray(1) }
+        )
+        interpreter?.runSignature(emptyMap<String, Any>(), outputs, "initialize")
     }
 }
