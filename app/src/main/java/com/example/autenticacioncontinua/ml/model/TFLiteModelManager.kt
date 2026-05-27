@@ -2,6 +2,7 @@ package com.example.autenticacioncontinua.ml.model
 
 import android.content.Context
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.flex.FlexDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -18,12 +19,14 @@ class TFLiteModelManager(private val context: Context) {
         try {
             val options = Interpreter.Options().apply {
                 setUseNNAPI(false) // Compatible con minSdk 24
+                addDelegate(FlexDelegate())
             }
             val modelBuffer = loadModelFile("startModel.tflite")
             interpreter = Interpreter(modelBuffer, options)
+            interpreter?.allocateTensors()
             
-            // Inicializar las variables para evitar el error READ_VARIABLE
-            interpreter?.runSignature(emptyMap<String, Any>(), emptyMap<String, Any>(), "initialize")
+            val outputs = mutableMapOf<String, Any>()
+            interpreter?.runSignature(emptyMap<String, Any>(), outputs, "initialize")
         } catch (e: Exception) {
             initializationError = "Error cargando modelo: ${e.message}. Asegúrate de colocar startModel.tflite en app/src/main/assets/"
         }
@@ -46,20 +49,19 @@ class TFLiteModelManager(private val context: Context) {
     fun getParameters(): List<ByteBuffer> {
         val interp = getValidInterpreter()
         
-        // Assuming the TFLite model has a signature named "parameters" to fetch weights
         val inputs = emptyMap<String, Any>()
         val outputs = mutableMapOf<String, Any>()
         
         // Get output tensor shapes from signature
-        val outputTensors = interp.getSignatureOutputs("parameters")
+        val outputTensors = interp.getSignatureOutputs("save")
         for (tensorName in outputTensors) {
-            val tensor = interp.getOutputTensorFromSignature(tensorName, "parameters")
+            val tensor = interp.getOutputTensorFromSignature(tensorName, "save")
             val buffer = ByteBuffer.allocateDirect(tensor.numBytes())
             buffer.order(ByteOrder.nativeOrder())
             outputs[tensorName] = buffer
         }
         
-        interp.runSignature(inputs, outputs, "parameters")
+        interp.runSignature(inputs, outputs, "save")
         
         // Sort keys to maintain consistent order, assuming tensor names can be sorted or ordered properly
         // In typical TFLite FL models, order is maintained by the array or we can just use values
