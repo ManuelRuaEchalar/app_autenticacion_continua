@@ -1,83 +1,169 @@
 package com.example.autenticacioncontinua.ml.training
 
+import android.util.Log
+import com.example.autenticacioncontinua.domain.ml.SensorWindow
+import com.example.autenticacioncontinua.ml.data.BackgroundPool
+import com.example.autenticacioncontinua.ml.model.HeadStore
 import com.example.autenticacioncontinua.ml.model.TFLiteModelManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
+import kotlin.coroutines.coroutineContext
+import kotlin.random.Random
 
+/**
+ * Resultado de un `fit` local.
+ *
+ * @param encoderWeights lo ÚNICO que vuelve al servidor.
+ * @param numExamples ventanas usadas (genuinas + impostoras). Es el peso con
+ *   el que FedAvg pondera la contribución de este cliente, así que tiene que
+ *   reflejar el volumen real de entrenamiento, no el de ventanas genuinas.
+ */
 data class TrainingResult(
-    val updatedParams: List<ByteBuffer>,
-    val numSamples: Int,
-    val loss: Float
-)
+    val encoderWeights: FloatArray,
+    val numExamples: Int,
+    val loss: Float,
+    val reconLoss: Float,
+    val clsLoss: Float,
+    val steps: Int
+) {
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
-class LocalTrainer(private val modelManager: TFLiteModelManager) {
+/**
+ * Entrenamiento local de una ronda federada.
+ *
+ * Réplica de `AuthClient.fit` (mejor.py:703-721):
+ *
+ *  1. Se inyecta el encoder agregado que llega del servidor.
+ *  2. Se recupera la cabeza personal del disco (nunca viaja por la red).
+ *  3. Se entrena el modelo COMPLETO —encoder y cabeza— durante `local_epochs`.
+ *  4. Se guarda la cabeza y se devuelven sólo los pesos del encoder.
+ *
+ * Los negativos salen del pool de impostores reales empaquetado en el APK.
+ * La versión anterior los fabricaba perturbando las ventanas del propio
+ * usuario con ruido y barajando sus filas: eso enseña al clasificador a
+ * distinguir "señal suave" de "señal ruidosa", no a un usuario de otro, y no
+ * se parece en nada a lo que aprende la simulación.
+ */
+class LocalTrainer(
+    private val modelManager: TFLiteModelManager,
+    private val backgroundPool: BackgroundPool,
+    private val headStore: HeadStore
+) {
+    private val manifest = modelManager.manifest
 
-    suspend fun train(
-        positiveWindows: List<FloatArray>,
-        globalParams: List<ByteBuffer>,
-        epochs: Int = 5
+    suspend fun fit(
+        globalEncoder: FloatArray,
+        trainWindows: List<SensorWindow>,
+        learningRate: Float,
+        epochs: Int = manifest.localEpochs,
+        seed: Long
     ): TrainingResult = withContext(Dispatchers.Default) {
-        
-        // Cargar parámetros globales
-        modelManager.setParameters(globalParams)
-        
-        if (positiveWindows.isEmpty()) {
-            return@withContext TrainingResult(globalParams, 0, 0f)
+
+        require(trainWindows.isNotEmpty()) { "fit() sin ventanas de entrenamiento" }
+        // Con `epochs = 0` el bucle no itera: `fit` devolvería el encoder que
+        // acaba de llegar del servidor, sin tocar, con loss=0.0 y sin un solo
+        // paso de gradiente. FedAvg promediaría copias del mismo vector y la
+        // federación entera no aprendería NADA, sin un error en ningún log.
+        // Ocurrió durante 18 rondas por un desajuste de campos en el proto
+        // (ver la nota de `Scalar` en transport.proto). Una ronda que no puede
+        // entrenar debe fallar a gritos, no devolver un encoder intacto.
+        require(epochs > 0) {
+            "fit() con epochs=$epochs. El servidor no envió un `local_epochs` " +
+                "legible o el manifiesto lo declara a cero."
+        }
+        require(learningRate > 0f) {
+            "fit() con learningRate=$learningRate: los pesos no se moverían."
+        }
+        check(!backgroundPool.isEmpty()) {
+            "El pool de impostores está vacío: sin negativos, la rama de " +
+                "clasificación colapsa a predecir siempre 'genuino'. Regenera " +
+                "los assets con --background-train."
         }
 
-        // Generar negativos sintéticos
-        val negativeWindows = generateSyntheticNegatives(positiveWindows)
-        
-        var finalLoss = 0f
-        
+        val genuinePerBatch = manifest.trainGenuinePerBatch
+        val backgroundPerBatch = manifest.trainBackgroundPerBatch
+
+        modelManager.setEncoderWeights(globalEncoder)
+        headStore.load()?.let { modelManager.setHeadWeights(it) }
+        if (manifest.resetOptimizerEachRound) modelManager.resetOptimizer()
+        modelManager.setLearningRate(learningRate)
+
+        val random = Random(seed)
+        val genuine = trainWindows.map { it.values }
+        // Con `background_ratio = 1.0`, tantos impostores como genuinos.
+        val backgroundCount = (genuine.size * manifest.backgroundRatio).toInt()
+        val stepsPerEpoch =
+            ((genuine.size + genuinePerBatch - 1) / genuinePerBatch).coerceAtLeast(1)
+
+        var lastLoss = 0f
+        var lastRecon = 0f
+        var lastCls = 0f
+        var totalSteps = 0
+
         for (epoch in 1..epochs) {
-            finalLoss = modelManager.trainEpoch(positiveWindows, negativeWindows)
+            val shuffled = genuine.shuffled(random)
+            val background = backgroundPool.sample(backgroundCount, random)
+
+            var epochLoss = 0f
+            var epochRecon = 0f
+            var epochCls = 0f
+
+            for (step in 0 until stepsPerEpoch) {
+                coroutineContext.ensureActive()
+
+                val genuineBatch = takeCyclic(shuffled, step * genuinePerBatch, genuinePerBatch)
+                val backgroundBatch = if (background.size >= backgroundPerBatch) {
+                    takeCyclic(background, step * backgroundPerBatch, backgroundPerBatch)
+                } else {
+                    // Pool de la ronda más pequeño que un lote: se recurre al
+                    // pool completo antes que reciclar las mismas ventanas.
+                    backgroundPool.sample(backgroundPerBatch, random)
+                }
+
+                val result = modelManager.trainStep(genuineBatch, backgroundBatch)
+                epochLoss += result.loss
+                epochRecon += result.reconLoss
+                epochCls += result.clsLoss
+                totalSteps++
+            }
+
+            lastLoss = epochLoss / stepsPerEpoch
+            lastRecon = epochRecon / stepsPerEpoch
+            lastCls = epochCls / stepsPerEpoch
+            Log.d(TAG, "época $epoch/$epochs: loss=$lastLoss recon=$lastRecon cls=$lastCls")
         }
-        
-        val updatedParams = modelManager.getParameters()
-        
+
+        headStore.save(modelManager.getHeadWeights())
+
         TrainingResult(
-            updatedParams = updatedParams,
-            numSamples = positiveWindows.size + negativeWindows.size,
-            loss = finalLoss
+            encoderWeights = modelManager.getEncoderWeights(),
+            numExamples = genuine.size + backgroundCount,
+            loss = lastLoss,
+            reconLoss = lastRecon,
+            clsLoss = lastCls,
+            steps = totalSteps
         )
     }
 
-    fun generateSyntheticNegatives(positives: List<FloatArray>): List<FloatArray> {
-        // Perturbar con ruido gaussiano σ=0.1 y permutar orden temporal
-        return positives.map { window ->
-            val noisy = window.copyOf()
-            for (i in noisy.indices) {
-                // simple uniform noise as pseudo-gaussian or simple random [-0.1, 0.1]
-                noisy[i] += (Math.random() * 0.2 - 0.1).toFloat()
-            }
-            
-            // Permute temporally: 
-            // the window has shape (128, 6) flattened to 768 elements
-            // To temporally shuffle, we can shuffle the 128 rows.
-            val rows = mutableListOf<FloatArray>()
-            var k = 0
-            for (i in 0 until 128) {
-                val row = FloatArray(6)
-                for (j in 0 until 6) {
-                    row[j] = noisy[k++]
-                }
-                rows.add(row)
-            }
-            
-            rows.shuffle()
-            
-            val shuffledNoisy = FloatArray(noisy.size)
-            k = 0
-            for (i in 0 until 128) {
-                val row = rows[i]
-                for (j in 0 until 6) {
-                    shuffledNoisy[k++] = row[j]
-                }
-            }
-            
-            shuffledNoisy
-        }
+    /**
+     * Toma `count` elementos a partir de `from`, dando la vuelta al llegar al
+     * final.
+     *
+     * El lote es de tamaño fijo, así que el último de cada época se completa
+     * reutilizando ventanas del principio en lugar de descartarse. Con pocas
+     * ventanas por dispositivo, tirar el resto significaría perder una
+     * fracción apreciable de los datos del usuario en cada época.
+     */
+    private fun takeCyclic(source: List<FloatArray>, from: Int, count: Int): List<FloatArray> {
+        val out = ArrayList<FloatArray>(count)
+        for (i in 0 until count) out.add(source[(from + i) % source.size])
+        return out
+    }
+
+    private companion object {
+        const val TAG = "LocalTrainer"
     }
 }

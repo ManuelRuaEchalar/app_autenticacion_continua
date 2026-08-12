@@ -4,10 +4,12 @@ import androidx.room.Room
 import com.example.autenticacioncontinua.data.local.AppDatabase
 import com.example.autenticacioncontinua.data.repository.AccelerometerRepositoryImpl
 import com.example.autenticacioncontinua.data.repository.GyroscopeRepositoryImpl
+import com.example.autenticacioncontinua.data.repository.TrainingHistoryRepositoryImpl
 import com.example.autenticacioncontinua.device.sensor.AccelerometerSensorImpl
 import com.example.autenticacioncontinua.device.sensor.GyroscopeSensorImpl
 import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
 import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
+import com.example.autenticacioncontinua.domain.repository.ITrainingHistoryRepository
 import com.example.autenticacioncontinua.domain.sensor.IAccelerometerSensor
 import com.example.autenticacioncontinua.domain.sensor.IGyroscopeSensor
 import com.example.autenticacioncontinua.domain.session.ISessionManager
@@ -28,12 +30,16 @@ val appModule = module {
             androidContext(),
             AppDatabase::class.java,
             "continuous_auth_db"
-        ).addMigrations(AppDatabase.MIGRATION_3_4).build()
+        ).addMigrations(
+            AppDatabase.MIGRATION_3_4,
+            AppDatabase.MIGRATION_4_5
+        ).build()
     }
 
     // Repositories
     single<IGyroscopeRepository> { GyroscopeRepositoryImpl(get()) }
     single<IAccelerometerRepository> { AccelerometerRepositoryImpl(get()) }
+    single<ITrainingHistoryRepository> { TrainingHistoryRepositoryImpl(get()) }
 
     // Sensors
     single<IGyroscopeSensor> { GyroscopeSensorImpl(androidContext()) }

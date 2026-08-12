@@ -19,29 +19,34 @@ service FlowerService {
 
 message ServerMessage {
     oneof msg {
-        GetPropertiesIns get_properties_ins = 1;
-        GetParametersIns get_parameters_ins = 2;
-        FitIns fit_ins = 3;
-        EvaluateIns evaluate_ins = 4;
+        ReconnectIns reconnect_ins = 1;
+        GetPropertiesIns get_properties_ins = 2;
+        GetParametersIns get_parameters_ins = 3;
+        FitIns fit_ins = 4;
+        EvaluateIns evaluate_ins = 5;
     }
 }
 
+message ReconnectIns {
+    int64 seconds = 1;
+}
+
 message GetPropertiesIns {
-    Properties config = 1;
+    map<string, Scalar> config = 1;
 }
 
 message GetParametersIns {
-    Properties config = 1;
+    map<string, Scalar> config = 1;
 }
 
 message FitIns {
     Parameters parameters = 1;
-    Properties config = 2;
+    map<string, Scalar> config = 2;
 }
 
 message EvaluateIns {
     Parameters parameters = 1;
-    Properties config = 2;
+    map<string, Scalar> config = 2;
 }
 
 // -------------------------------------------------------------------------
@@ -58,13 +63,25 @@ message ClientMessage {
     }
 }
 
+// El servidor declara `reason` como enum, no como string. Enviar un string
+// aquí no rompía nada visible —protobuf descarta el campo por desajuste de
+// wire type y lo trata como desconocido— pero el motivo de desconexión nunca
+// llegaba al servidor.
+enum Reason {
+    UNKNOWN = 0;
+    RECONNECT = 1;
+    POWER_DISCONNECTED = 2;
+    WIFI_UNAVAILABLE = 3;
+    ACK = 4;
+}
+
 message DisconnectRes {
-    string reason = 1;
+    Reason reason = 1;
 }
 
 message GetPropertiesRes {
     Status status = 1;
-    Properties properties = 2;
+    map<string, Scalar> properties = 2;
 }
 
 message GetParametersRes {
@@ -76,14 +93,14 @@ message FitRes {
     Status status = 1;
     Parameters parameters = 2;
     int64 num_examples = 3;
-    Properties metrics = 4;
+    map<string, Scalar> metrics = 4;
 }
 
 message EvaluateRes {
     Status status = 1;
     float loss = 2;
     int64 num_examples = 3;
-    Properties metrics = 4;
+    map<string, Scalar> metrics = 4;
 }
 
 // -------------------------------------------------------------------------
@@ -107,16 +124,30 @@ message Status {
     string message = 2;
 }
 
-message Properties {
-    map<string, Scalar> properties = 1;
-}
-
+// Los NÚMEROS DE CAMPO y los TIPOS deben coincidir exactamente con
+// flwr/proto/transport.proto del servidor (flwr 1.23.0). No son correlativos
+// a propósito: Flower dejó huecos al eliminar campos antiguos.
+//
+// Esta declaración tenía `int64 sint64 = 2`, y ese desajuste dejó la
+// federación entera sin entrenar durante 18 rondas sin un solo error:
+//   · El servidor emite `local_epochs` como sint64 (zigzag) en el campo 8.
+//   · El cliente leía el campo 2 como int64, así que el valor caía en los
+//     campos desconocidos y el `oneof` quedaba SIN ASIGNAR.
+//   · `Scalar.getSint64()` de proto3 devuelve 0 —no null— cuando el `oneof`
+//     apunta a otra cosa, de modo que el `?:` de FlowerGrpcClient nunca caía
+//     al valor del manifiesto: `local_epochs` valía 0.
+//   · `for (epoch in 1..0)` no itera. El encoder volvía al servidor idéntico
+//     al que había llegado, con loss=0.0, y FedAvg promediaba 18 copias del
+//     mismo vector.
+// `double` estaba en el campo 1 en ambos lados, y por eso `lr` sí llegaba
+// bien: era el único valor de configuración que el cliente leía de verdad.
 message Scalar {
     oneof scalar {
         double double = 1;
-        int64 sint64 = 2;
-        bool bool = 3;
-        string string = 4;
-        bytes bytes = 5;
+        uint64 uint64 = 6;
+        sint64 sint64 = 8;
+        bool bool = 13;
+        string string = 14;
+        bytes bytes = 15;
     }
 }

@@ -30,4 +30,16 @@ class AccelerometerRepositoryImpl(
             db.accelerometerDao().getAll().map { it.toDomain() }
         }
     }
+
+    override suspend fun getAccelerometerDataSince(sinceMs: Long): List<AccelerometerData> {
+        return withContext(Dispatchers.IO) {
+            db.accelerometerDao().getSince(sinceMs).map { it.toDomain() }
+        }
+    }
+
+    override suspend fun deleteAccelerometerDataOlderThan(cutoffMs: Long): Int {
+        return withContext(Dispatchers.IO) {
+            db.accelerometerDao().deleteOlderThan(cutoffMs)
+        }
+    }
 }

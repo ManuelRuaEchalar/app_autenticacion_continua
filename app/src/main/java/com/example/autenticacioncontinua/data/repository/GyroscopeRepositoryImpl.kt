@@ -49,4 +49,16 @@ class GyroscopeRepositoryImpl(
             db.gyroscopeDao().getAll().map { it.toDomain() }
         }
     }
+
+    override suspend fun getGyroscopeDataSince(sinceMs: Long): List<GyroscopeData> {
+        return withContext(Dispatchers.IO) {
+            db.gyroscopeDao().getSince(sinceMs).map { it.toDomain() }
+        }
+    }
+
+    override suspend fun deleteGyroscopeDataOlderThan(cutoffMs: Long): Int {
+        return withContext(Dispatchers.IO) {
+            db.gyroscopeDao().deleteOlderThan(cutoffMs)
+        }
+    }
 }

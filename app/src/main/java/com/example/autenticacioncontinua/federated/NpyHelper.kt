@@ -1,92 +1,99 @@
 package com.example.autenticacioncontinua.federated
 
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/**
+ * Serialización `.npy` para el transporte de Flower.
+ *
+ * Flower deserializa cada tensor con `np.load(BytesIO(bytes))`
+ * independientemente de lo que diga `tensor_type`, así que el cliente Android
+ * tiene que emitir ficheros `.npy` válidos y no floats crudos.
+ *
+ * El intercambio FedPer usa UN ÚNICO tensor 1-D: el vector plano del encoder.
+ * Del lado de Python eso es un `ndarray` de forma `(encoder_flat_size,)`, que
+ * FedAvg promedia elemento a elemento igual que promediaría quince tensores
+ * sueltos. Se evita así tener que acordar el emparejamiento entre nombres de
+ * firma de TFLite y el orden de `model.weights` de Keras.
+ *
+ * Todo se escribe en little-endian explícito (`<f4`): aunque las ABI de
+ * Android en uso lo sean, depender del orden nativo haría que un fallo sólo
+ * apareciese en un dispositivo concreto.
+ */
 object NpyHelper {
 
-    /**
-     * Extrae el payload (raw floats) de un archivo .npy en formato ByteBuffer.
-     * Salta la cabecera de 128 bytes (o la longitud que indique) y devuelve
-     * un slice del buffer original.
-     */
-    fun stripNpyHeader(buffer: ByteBuffer): ByteBuffer {
-        buffer.order(ByteOrder.LITTLE_ENDIAN)
-        val pos = buffer.position()
+    private const val MAGIC_LENGTH = 6
+    private val MAGIC = byteArrayOf(0x93.toByte(), 'N'.code.toByte(), 'U'.code.toByte(),
+        'M'.code.toByte(), 'P'.code.toByte(), 'Y'.code.toByte())
 
-        // 1. Check Magic String "\x93NUMPY"
-        if (buffer.get() != 0x93.toByte() ||
-            buffer.get() != 'N'.toByte() ||
-            buffer.get() != 'U'.toByte() ||
-            buffer.get() != 'M'.toByte() ||
-            buffer.get() != 'P'.toByte() ||
-            buffer.get() != 'Y'.toByte()
-        ) {
-            // Not a NPY file, return as is
-            buffer.position(pos)
-            return buffer
-        }
+    /** Empaqueta un vector como `.npy` 1-D de float32. */
+    fun toNpy(values: FloatArray): ByteBuffer {
+        val dict = "{'descr': '<f4', 'fortran_order': False, 'shape': (${values.size},), }"
+        // La especificación exige que (10 + longitud de cabecera) sea múltiplo
+        // de 64 para que el payload quede alineado.
+        val unpadded = 10 + dict.length + 1
+        val padding = (64 - unpadded % 64) % 64
+        val header = dict + " ".repeat(padding) + "\n"
 
-        // 2. Version
-        val major = buffer.get()
-        val minor = buffer.get()
+        val buffer = ByteBuffer
+            .allocate(10 + header.length + values.size * 4)
+            .order(ByteOrder.LITTLE_ENDIAN)
 
-        // 3. Header Length
-        val headerLen = if (major.toInt() == 1) {
-            buffer.short.toInt()
-        } else {
-            buffer.int // For version 2.0+
-        }
+        buffer.put(MAGIC)
+        buffer.put(1)  // versión mayor
+        buffer.put(0)  // versión menor
+        buffer.putShort(header.length.toShort())
+        buffer.put(header.toByteArray(Charsets.US_ASCII))
+        for (v in values) buffer.putFloat(v)
 
-        // The data starts at 10 + headerLen (for v1) or 12 + headerLen (for v2)
-        val offset = (if (major.toInt() == 1) 10 else 12) + headerLen
-
-        // Return a sliced buffer pointing directly to the data
-        buffer.position(offset)
-        return buffer.slice()
+        buffer.rewind()
+        return buffer
     }
 
     /**
-     * Envuelve un ByteBuffer de floats raw con una cabecera .npy estándar 1D.
-     * Esto es necesario para que el servidor Flower (Python) pueda hacer np.load().
+     * Extrae los float32 de un `.npy`.
+     *
+     * Acepta también un buffer sin cabecera (se interpreta como float32
+     * little-endian crudo), lo que permite tolerar un servidor que envíe los
+     * pesos sin envolver.
      */
-    fun wrapWithNpyHeader(rawBuffer: ByteBuffer): ByteBuffer {
-        val numFloats = rawBuffer.remaining() / 4
+    fun fromNpy(buffer: ByteBuffer): FloatArray {
+        val source = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        val start = source.position()
 
-        // Crear la cadena del diccionario
-        val dictString = "{'descr': '<f4', 'fortran_order': False, 'shape': ($numFloats,), }"
-        
-        // La longitud de la cabecera debe ser dictString.length + 1 (por el \n),
-        // y (10 + dictLength) debe ser múltiplo de 64.
-        var paddingLength = 64 - ((10 + dictString.length + 1) % 64)
-        if (paddingLength == 64) paddingLength = 0
-        
-        val paddedDict = dictString + " ".repeat(paddingLength) + "\n"
-        val headerLength = paddedDict.length
+        if (source.remaining() < 10 || !hasMagic(source, start)) {
+            source.position(start)
+            return readFloats(source)
+        }
 
-        val npyBuffer = ByteBuffer.allocateDirect(10 + headerLength + rawBuffer.remaining())
-        npyBuffer.order(ByteOrder.LITTLE_ENDIAN)
+        source.position(start + MAGIC_LENGTH)
+        val major = source.get().toInt()
+        source.get() // versión menor, no se usa
+        val headerLength = if (major == 1) {
+            source.short.toInt() and 0xFFFF
+        } else {
+            source.int
+        }
+        val dataOffset = start + (if (major == 1) 10 else 12) + headerLength
+        if (dataOffset > source.limit()) {
+            throw IOException("Cabecera .npy inconsistente: los datos empezarían en $dataOffset")
+        }
+        source.position(dataOffset)
+        return readFloats(source)
+    }
 
-        // Magic string
-        npyBuffer.put(0x93.toByte())
-        npyBuffer.put("NUMPY".toByteArray(Charsets.US_ASCII))
-        
-        // Version 1.0
-        npyBuffer.put(1.toByte())
-        npyBuffer.put(0.toByte())
-        
-        // Header length
-        npyBuffer.putShort(headerLength.toShort())
-        
-        // Dictionary
-        npyBuffer.put(paddedDict.toByteArray(Charsets.US_ASCII))
-        
-        // Payload
-        val oldPos = rawBuffer.position()
-        npyBuffer.put(rawBuffer)
-        rawBuffer.position(oldPos)
+    private fun hasMagic(buffer: ByteBuffer, start: Int): Boolean {
+        for (i in MAGIC.indices) {
+            if (buffer.get(start + i) != MAGIC[i]) return false
+        }
+        return true
+    }
 
-        npyBuffer.rewind()
-        return npyBuffer
+    private fun readFloats(buffer: ByteBuffer): FloatArray {
+        val count = buffer.remaining() / 4
+        val out = FloatArray(count)
+        buffer.asFloatBuffer().get(out)
+        return out
     }
 }

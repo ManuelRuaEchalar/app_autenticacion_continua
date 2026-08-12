@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.autenticacioncontinua.domain.session.CollectionPolicy
 import com.example.autenticacioncontinua.domain.session.SessionState
 import com.example.autenticacioncontinua.presentation.MainViewModel
 import com.example.autenticacioncontinua.presentation.FederatedViewModel
@@ -173,6 +174,12 @@ fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
         item { ProgressCard(state) }
         item { DatabaseSizeCard(state) }
 
+        // El entrenamiento federado va ARRIBA, no al final de la lista.
+        // Estaba después de las tablas de giroscopio y acelerómetro, que
+        // pintan una fila por muestra: con una fecha seleccionada quedaban
+        // cientos de filas por medio y el botón resultaba inalcanzable.
+        item { FederatedLearningSection() }
+
         item {
             androidx.compose.material3.Button(
                 onClick = { exportLauncher.launch("datos_sensores.csv") },
@@ -260,11 +267,6 @@ fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
                 DataTableRow(index, data.x, data.y, data.z)
             }
         }
-        
-        // ── Federated Learning ───────────────────────────────────────
-        item {
-            FederatedLearningSection()
-        }
     }
 }
 
@@ -299,19 +301,30 @@ fun StatusCard(state: UiState) {
     val (statusText, statusColor, description) = when (state.sessionState) {
         SessionState.IDLE -> Triple(
             "En espera", AccentCyan,
-            "El servicio está activo en segundo plano. La recolección comenzará automáticamente tras 2 min de uso continuo."
+            "El servicio está activo en segundo plano. La recolección comenzará " +
+                "automáticamente tras ${CollectionPolicy.requiredContinuousUsageSeconds} s de uso continuo."
         )
         SessionState.MONITORING_USAGE -> Triple(
             "Detectando uso continuo", AccentOrange,
-            "Pantalla encendida. Esperando a que se cumplan 2 minutos de uso continuo…"
+            "Pantalla encendida. Esperando a que se cumplan " +
+                "${CollectionPolicy.requiredContinuousUsageSeconds} s de uso continuo…"
         )
         SessionState.RECORDING -> Triple(
             "Grabando datos IMU", AccentGreen,
             "Capturando giroscopio y acelerómetro a 50 Hz. Puedes cerrar la app."
         )
+        SessionState.COOLDOWN -> Triple(
+            "En pausa entre capturas", AccentCyan,
+            if (state.cooldownMinutes > 0)
+                "Ya se capturó una ráfaga. La siguiente en unos ${state.cooldownMinutes} min, " +
+                    "para repartir las capturas a lo largo del día."
+            else
+                "Ya se capturó una ráfaga. La siguiente en breve."
+        )
         SessionState.DAILY_LIMIT_REACHED -> Triple(
             "Sesión completa ✓", AccentPurple,
-            "Se recolectaron los 15 minutos de datos IMU de hoy."
+            "Se recolectaron los ${CollectionPolicy.DAILY_LIMIT_MINUTES} minutos " +
+                "de datos IMU de hoy."
         )
     }
 
@@ -358,7 +371,8 @@ fun PulsingDot(color: Color) {
 @Composable
 fun ProgressCard(state: UiState) {
     val recorded = state.todayStat?.totalMinutesRecorded ?: 0
-    val progress = (recorded / 15f).coerceIn(0f, 1f)
+    val progress =
+        (recorded / CollectionPolicy.DAILY_LIMIT_MINUTES.toFloat()).coerceIn(0f, 1f)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -369,7 +383,7 @@ fun ProgressCard(state: UiState) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Progreso de hoy", style = MaterialTheme.typography.titleSmall, color = TextPrimary)
                 Text(
-                    "$recorded / 15 min",
+                    "$recorded / ${CollectionPolicy.DAILY_LIMIT_MINUTES} min",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = AccentCyan
                 )
@@ -590,6 +604,141 @@ fun FederatedLearningSection(viewModel: FederatedViewModel = koinViewModel()) {
                     }
                 }
             }
+
+            state.lastRun?.let { run ->
+                Spacer(modifier = Modifier.height(20.dp))
+                UltimoResultado(run)
+            }
+
+            if (state.history.size > 1) {
+                Spacer(modifier = Modifier.height(20.dp))
+                HistorialEntrenamientos(state.history)
+            }
+        }
+    }
+}
+
+/**
+ * Resultado de la última sesión, sobre el conjunto CIEGO.
+ *
+ * Se muestran EER, FAR y FRR juntos a propósito: un EER razonable con FRR≈1
+ * describe un sistema que rechaza siempre al usuario legítimo, y eso sólo se
+ * ve mirando las tres tasas a la vez.
+ */
+@Composable
+private fun UltimoResultado(run: com.example.autenticacioncontinua.domain.model.TrainingRun) {
+    Text(
+        "Último resultado (prueba ciega)",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = TextPrimary
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+
+    if (!run.hasBlindTest) {
+        Text(
+            "La sesión no llegó a medirse sobre el conjunto de prueba.",
+            color = AccentOrange,
+            style = MaterialTheme.typography.bodySmall
+        )
+        return
+    }
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        MetricaCompacta("EER", String.format("%.2f%%", run.testEer * 100), AccentCyan)
+        MetricaCompacta("AUC", String.format("%.4f", run.testAuc), AccentCyan)
+        MetricaCompacta("FAR", String.format("%.2f%%", run.testFar * 100), TextSecondary)
+        MetricaCompacta("FRR", String.format("%.2f%%", run.testFrr * 100), TextSecondary)
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        "${run.rounds} rondas · ${run.trainWindows} ventanas de entrenamiento · " +
+            "${run.testWindows} de prueba · ${run.sessionCount} sesiones de uso",
+        color = TextSecondary,
+        style = MaterialTheme.typography.bodySmall
+    )
+
+    if (run.leakageSuspected) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "⚠ Sólo ${run.sessionCount} sesión(es) de uso distintas. El modelo se " +
+                "evalúa casi con los mismos datos con los que entrenó, así que este " +
+                "número es mejor de lo real. Sigue usando el móvil con normalidad " +
+                "unos días.",
+            color = AccentOrange,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    if (run.thresholdUnusable) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "⚠ Con el umbral calibrado (${String.format("%.3f", run.threshold)}) el " +
+                "sistema rechazaría al usuario legítimo casi siempre. El umbral aún " +
+                "no es utilizable en tiempo real.",
+            color = AccentOrange,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun MetricaCompacta(etiqueta: String, valor: String, color: androidx.compose.ui.graphics.Color) {
+    Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        Text(etiqueta, color = TextSecondary, style = MaterialTheme.typography.labelSmall)
+        Text(
+            valor,
+            color = color,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+        )
+    }
+}
+
+/**
+ * Historial de sesiones, lo más reciente primero.
+ *
+ * Sin esto el usuario sólo veía "finalizado exitosamente" y no tenía forma de
+ * saber si su modelo mejora sesión a sesión o se ha estancado.
+ */
+@Composable
+private fun HistorialEntrenamientos(
+    history: List<com.example.autenticacioncontinua.domain.model.TrainingRun>
+) {
+    val formato = remember { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()) }
+
+    Text(
+        "Historial",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = TextPrimary
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+
+    history.forEach { run ->
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                formato.format(java.util.Date(run.finishedAtMs)),
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                when {
+                    !run.completed -> "abortada"
+                    !run.hasBlindTest -> "sin medición"
+                    else -> "EER ${String.format("%.2f%%", run.testEer * 100)}"
+                },
+                color = when {
+                    !run.completed -> AccentOrange
+                    run.leakageSuspected -> AccentOrange
+                    else -> TextPrimary
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                "${run.rounds} rondas · ${run.sessionCount} ses.",
+                color = TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

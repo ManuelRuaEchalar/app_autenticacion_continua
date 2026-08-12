@@ -15,7 +15,14 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.autenticacioncontinua.MainActivity
+import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
+import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
 import com.example.autenticacioncontinua.domain.session.ISessionManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
 /**
@@ -28,11 +35,21 @@ import org.koin.android.ext.android.inject
 class DataCollectionService : Service() {
 
     private val sessionManager: ISessionManager by inject()
+    private val accelerometerRepository: IAccelerometerRepository by inject()
+    private val gyroscopeRepository: IGyroscopeRepository by inject()
+
+    private val purgeScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
         private const val TAG = "DataCollectionService"
         private const val CHANNEL_ID = "continuous_auth_channel"
         private const val NOTIFICATION_ID = 1
+
+        /**
+         * Retención de datos crudos: algo más que los 14 días que lee
+         * `WindowSegmenter.DEFAULT_HISTORY_MS`.
+         */
+        private const val RETENTION_MS = 21L * 24 * 60 * 60 * 1000
     }
 
     /**
@@ -76,6 +93,7 @@ class DataCollectionService : Service() {
         registerReceiver(screenReceiver, filter)
         Log.d(TAG, "Screen receiver registered")
 
+        purgeOldData()
         sessionManager.startMonitoring()
 
         // If the screen is already on when the service starts, trigger immediately
@@ -83,6 +101,35 @@ class DataCollectionService : Service() {
         if (pm.isInteractive) {
             Log.d(TAG, "Screen is already ON at service start")
             sessionManager.onDeviceUnlocked()
+        }
+    }
+
+    /**
+     * Borra las lecturas que `WindowSegmenter` ya no puede usar.
+     *
+     * El ventaneo sólo mira los últimos 14 días, pero nada borraba lo
+     * anterior: la base crecía sin techo. Con el presupuesto diario subido a
+     * 90 min eso son ~650 mil filas al día entre los dos sensores, así que la
+     * purga deja de ser opcional.
+     *
+     * El margen extra sobre los 14 días es deliberado: da holgura para
+     * depurar con datos que el entrenamiento ya no usa, en vez de borrarlos
+     * justo en la frontera.
+     */
+    private fun purgeOldData() {
+        purgeScope.launch {
+            val cutoff = System.currentTimeMillis() - RETENTION_MS
+            try {
+                val acc = accelerometerRepository.deleteAccelerometerDataOlderThan(cutoff)
+                val gyro = gyroscopeRepository.deleteGyroscopeDataOlderThan(cutoff)
+                if (acc + gyro > 0) {
+                    Log.i(TAG, "Purga: $acc filas de acelerómetro y $gyro de " +
+                        "giroscopio anteriores a ${RETENTION_MS / 86_400_000} días")
+                }
+            } catch (e: Exception) {
+                // Que falle la purga no debe impedir recolectar.
+                Log.e(TAG, "La purga de datos antiguos falló", e)
+            }
         }
     }
 
@@ -99,6 +146,7 @@ class DataCollectionService : Service() {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) { }
         sessionManager.stopMonitoring()
+        purgeScope.cancel()
         Log.d(TAG, "Service destroyed")
     }
 

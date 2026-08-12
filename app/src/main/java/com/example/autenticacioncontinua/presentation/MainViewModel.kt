@@ -26,6 +26,8 @@ import com.example.autenticacioncontinua.domain.export.IDataExportService
 
 data class UiState(
     val sessionState: SessionState = SessionState.IDLE,
+    /** Minutos restantes de enfriamiento; 0 si no está en pausa. */
+    val cooldownMinutes: Int = 0,
     val todayStat: DailySessionStat? = null,
     val recordedDates: List<String> = emptyList(),
     val selectedDate: String = "",
@@ -67,6 +69,7 @@ class MainViewModel(
 
                 _uiState.value = _uiState.value.copy(
                     sessionState = state,
+                    cooldownMinutes = sessionManager.getCooldownRemainingMinutes(),
                     todayStat = stat,
                     databaseSizeBytes = dbSize
                 )

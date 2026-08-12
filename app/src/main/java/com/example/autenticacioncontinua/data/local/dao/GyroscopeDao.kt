@@ -22,4 +22,12 @@ interface GyroscopeDao {
 
     @Query("SELECT * FROM gyroscope_data ORDER BY timestamp ASC")
     suspend fun getAll(): List<GyroscopeEntity>
+
+    /** Ver [AccelerometerDao.getSince]. */
+    @Query("SELECT * FROM gyroscope_data WHERE timestamp >= :sinceMs ORDER BY timestamp ASC")
+    suspend fun getSince(sinceMs: Long): List<GyroscopeEntity>
+
+    /** Ver [AccelerometerDao.deleteOlderThan]. */
+    @Query("DELETE FROM gyroscope_data WHERE timestamp < :cutoffMs")
+    suspend fun deleteOlderThan(cutoffMs: Long): Int
 }
