@@ -3,6 +3,7 @@ package com.example.autenticacioncontinua.ml.training
 import android.util.Log
 import com.example.autenticacioncontinua.domain.ml.SensorWindow
 import com.example.autenticacioncontinua.ml.data.BackgroundPool
+import com.example.autenticacioncontinua.ml.data.WindowEnergy
 import com.example.autenticacioncontinua.ml.model.HeadStore
 import com.example.autenticacioncontinua.ml.model.TFLiteModelManager
 import kotlinx.coroutines.Dispatchers
@@ -54,11 +55,18 @@ class LocalTrainer(
 ) {
     private val manifest = modelManager.manifest
 
+    /**
+     * @param emparejarImpostores si muestrear el fondo emparejado por energía
+     *   con las genuinas. Con `false` se muestrea al azar, que es el
+     *   comportamiento anterior a la v1.6 y la condición "línea base" del
+     *   experimento de ablación. Lo dicta el servidor.
+     */
     suspend fun fit(
         globalEncoder: FloatArray,
         trainWindows: List<SensorWindow>,
         learningRate: Float,
         epochs: Int = manifest.localEpochs,
+        emparejarImpostores: Boolean = true,
         seed: Long
     ): TrainingResult = withContext(Dispatchers.Default) {
 
@@ -103,9 +111,30 @@ class LocalTrainer(
         var lastCls = 0f
         var totalSteps = 0
 
+        // Energía de cada genuina, calculada UNA vez: es inmutable y este
+        // proyecto mide consumo de batería, así que recalcularla en cada época
+        // sería gastar justo lo que se está midiendo.
+        val energiasGenuinas = FloatArray(genuine.size) {
+            WindowEnergy.accStdMedio(genuine[it], manifest.nFeatures)
+        }
+
         for (epoch in 1..epochs) {
-            val shuffled = genuine.shuffled(random)
-            val background = backgroundPool.sample(backgroundCount, random)
+            // Se baraja el ÍNDICE, no la lista, para poder reordenar las
+            // energías con la misma permutación y que `background[i]` siga
+            // emparejado con `shuffled[i]`.
+            val orden = genuine.indices.shuffled(random)
+            val shuffled = orden.map { genuine[it] }
+            // Impostoras emparejadas por energía con las genuinas de esta
+            // época. Sin esto, el entrenamiento aprende en parte a separar
+            // "quieto" de "en movimiento" —que es como difieren nuestros datos
+            // de los de HMOG— en lugar de separar personas.
+            val background = if (emparejarImpostores) {
+                backgroundPool.sampleMatched(
+                    FloatArray(orden.size) { energiasGenuinas[orden[it]] }, random
+                )
+            } else {
+                backgroundPool.sample(backgroundCount, random)
+            }
 
             var epochLoss = 0f
             var epochRecon = 0f
@@ -116,11 +145,23 @@ class LocalTrainer(
 
                 val genuineBatch = takeCyclic(shuffled, step * genuinePerBatch, genuinePerBatch)
                 val backgroundBatch = if (background.size >= backgroundPerBatch) {
+                    // Mismo offset y mismo tamaño que el lote genuino, así que
+                    // la pareja por energía se conserva dentro del lote.
                     takeCyclic(background, step * backgroundPerBatch, backgroundPerBatch)
                 } else {
-                    // Pool de la ronda más pequeño que un lote: se recurre al
-                    // pool completo antes que reciclar las mismas ventanas.
-                    backgroundPool.sample(backgroundPerBatch, random)
+                    // Menos genuinas que un lote: se completa emparejando
+                    // contra las energías de ESTE lote, para no perder el
+                    // balance justo en el caso degenerado.
+                    if (emparejarImpostores) {
+                        backgroundPool.sampleMatched(
+                            FloatArray(genuineBatch.size) {
+                                WindowEnergy.accStdMedio(genuineBatch[it], manifest.nFeatures)
+                            },
+                            random
+                        )
+                    } else {
+                        backgroundPool.sample(backgroundPerBatch, random)
+                    }
                 }
 
                 val result = modelManager.trainStep(genuineBatch, backgroundBatch)

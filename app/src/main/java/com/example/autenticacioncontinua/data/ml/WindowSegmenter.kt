@@ -1,11 +1,14 @@
 package com.example.autenticacioncontinua.data.ml
 
 import android.util.Log
+import com.example.autenticacioncontinua.domain.ml.ExclusionEtiquetada
 import com.example.autenticacioncontinua.domain.ml.IWindowSegmenter
 import com.example.autenticacioncontinua.domain.ml.SensorWindow
 import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
 import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
+import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.ml.data.FeatureScaler
+import com.example.autenticacioncontinua.ml.data.WindowEnergy
 import com.example.autenticacioncontinua.ml.model.ModelManifest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,10 +35,22 @@ import kotlinx.coroutines.withContext
  * hueco largo en la señal. La sesión es la unidad de la partición
  * train/val/test: repartir ventanas solapadas entre particiones sería fuga
  * directa, porque dos ventanas contiguas comparten 32 muestras de señal.
+ *
+ * Y lo primero de todo, antes de segmentar: se descartan los tramos grabados
+ * por OTRA PERSONA en este mismo teléfono (las capturas etiquetadas de
+ * impostor). Ver [ExclusionEtiquetada] para por qué se filtran muestras crudas
+ * y no ventanas ya construidas.
  */
 class WindowSegmenter(
     private val accelerometerRepository: IAccelerometerRepository,
     private val gyroscopeRepository: IGyroscopeRepository,
+    /**
+     * Quién sostenía el teléfono en cada ráfaga etiquetada.
+     *
+     * Sin esto, las capturas de impostor hechas en el propio aparato entrarían
+     * en el conjunto genuino del dueño. Ver [ExclusionEtiquetada].
+     */
+    private val labeledSessionRepository: ILabeledSessionRepository,
     private val manifest: ModelManifest,
     private val scaler: FeatureScaler,
     private val historyWindowMs: Long = DEFAULT_HISTORY_MS,
@@ -50,6 +65,18 @@ class WindowSegmenter(
     private val nFeatures = manifest.nFeatures
     private val targetHz = manifest.targetHz
 
+    /**
+     * Último umbral que se autocalibró, o `null` si no se llegó a filtrar.
+     *
+     * Se expone para poder anotarlo en el diario del dispositivo: en un móvil
+     * de un participante al que no tenemos acceso, saber con qué umbral se
+     * filtró es la única forma de auditar después por qué su conjunto salió
+     * como salió.
+     */
+    @Volatile
+    override var ultimoUmbralActividad: Float? = null
+        private set
+
     init {
         // Este segmentador sólo sabe producir acelerómetro + giroscopio. Una
         // configuración de sensores distinta (p. ej. con gestos táctiles)
@@ -60,10 +87,30 @@ class WindowSegmenter(
         }
     }
 
-    override suspend fun getWindows(): List<SensorWindow> = withContext(Dispatchers.IO) {
+    override suspend fun getWindows(
+        aplicarFiltroActividad: Boolean
+    ): List<SensorWindow> = withContext(Dispatchers.IO) {
+        ultimoUmbralActividad = null
         val since = System.currentTimeMillis() - historyWindowMs
-        val accel = accelerometerRepository.getAccelerometerDataSince(since)
-        val gyro = gyroscopeRepository.getGyroscopeDataSince(since)
+        val accelBruto = accelerometerRepository.getAccelerometerDataSince(since)
+        val gyroBruto = gyroscopeRepository.getGyroscopeDataSince(since)
+
+        // ANTES DE NADA MÁS: fuera lo que no es del dueño del teléfono. Si esto
+        // se hiciera después de segmentar, la interpolación ya habría mezclado
+        // las muestras de dos personas dentro de una misma ventana.
+        val excluidos = ExclusionEtiquetada.intervalos(labeledSessionRepository.desde(since))
+        val accel = accelBruto.filterNot { ExclusionEtiquetada.contiene(excluidos, it.timestamp) }
+        val gyro = gyroBruto.filterNot { ExclusionEtiquetada.contiene(excluidos, it.timestamp) }
+
+        if (excluidos.isNotEmpty()) {
+            Log.i(
+                TAG,
+                "Capturas etiquetadas de otras personas: ${excluidos.size} tramo(s) " +
+                    "excluidos del conjunto genuino; " +
+                    "acc ${accelBruto.size}->${accel.size}, " +
+                    "gyro ${gyroBruto.size}->${gyro.size} muestras"
+            )
+        }
 
         if (accel.isEmpty() || gyro.isEmpty()) {
             Log.i(TAG, "Sin datos suficientes: accel=${accel.size}, gyro=${gyro.size}")
@@ -129,7 +176,92 @@ class WindowSegmenter(
         }
 
         Log.i(TAG, "${windows.size} ventanas de $sessionId sesiones de uso continuo")
-        capWindows(windows)
+        val candidatas = if (aplicarFiltroActividad) {
+            filtrarPorActividad(windows)
+        } else {
+            Log.i(TAG, "Ablación 'baseline': NO se filtra por actividad")
+            windows
+        }
+        capWindows(candidatas)
+    }
+
+    /**
+     * Descarta las ventanas sin movimiento suficiente, con un umbral que el
+     * propio dispositivo se calibra (pendiente C).
+     *
+     * POR QUÉ NO UN UMBRAL FIJO. Medido sobre dos terminales del estudio:
+     *
+     *   percentil de acc_std_medio   Redmi 23129RA5FL   Redmi Note 11 Pro
+     *   p5  (reposo)                       0.0044             0.0018
+     *   p75 (movimiento)                   0.2196             0.1560
+     *
+     * Si la diferencia fuese un factor de escala del hardware, el cociente
+     * sería constante. No lo es: 2.4x en reposo y 1.4x en movimiento. Bajo
+     * `std² ≈ movimiento² + ruido²` eso dice que el primero tiene un SUELO DE
+     * RUIDO ~2.4x más alto, y que la diferencia real de uso entre los dos
+     * usuarios es sólo ~1.4x. Un umbral absoluto rechazaría ruido en un
+     * aparato y movimiento real en el otro. Con 10-20 modelos distintos eso no
+     * se ajusta a mano. (Es el efecto que documenta Stisen et al., SenSys
+     * 2015, para reconocimiento de actividad.)
+     *
+     * QUÉ SE CONSERVA. El 0.10 de `SessionManagerImpl.MOTION_THRESHOLD_MS2` no
+     * era un número mágico: se fijó como ~8x la energía en reposo medida en el
+     * dispositivo de desarrollo. Esa REGLA es la que generaliza; 0.10 era su
+     * valor en un aparato concreto. Aquí se conserva la regla (k=8 sobre el
+     * suelo propio) y se tira la constante.
+     *
+     * SE FILTRA ANTES DE [capWindows], Y ESO IMPORTA MÁS QUE EL UMBRAL.
+     * Filtrando después se pierde la mitad del conjunto; filtrando antes no se
+     * pierde nada, porque hay ~6x más material del que cabe en el tope.
+     * Medido: con el filtro puesto, ambos terminales siguen llenando las 800
+     * ventanas.
+     */
+    private fun filtrarPorActividad(windows: List<SensorWindow>): List<SensorWindow> {
+        if (windows.size < MIN_WINDOWS_TO_CALIBRATE) {
+            // Con poco material el p5 no significa nada y el umbral saldría a
+            // capricho. Es preferible no filtrar: las ventanas quietas que se
+            // cuelen ensucian, pero un umbral mal calibrado puede vaciar el
+            // conjunto entero.
+            Log.i(
+                TAG,
+                "Sólo ${windows.size} ventanas (<$MIN_WINDOWS_TO_CALIBRATE): " +
+                    "no se filtra por actividad, no hay con qué calibrar"
+            )
+            return windows
+        }
+
+        val energias = FloatArray(windows.size) {
+            WindowEnergy.accStdMedio(windows[it].values, nFeatures)
+        }
+        val suelo = WindowEnergy.percentil(energias, NOISE_FLOOR_PERCENTILE)
+
+        // El acotado evita los dos extremos patológicos: un usuario que deja el
+        // móvil quieto casi siempre sube su p5 y desactivaría el filtro; un
+        // sensor muy silencioso lo dispararía hasta tirarlo todo.
+        val umbral = (NOISE_FLOOR_K * suelo).coerceIn(MIN_THRESHOLD, MAX_THRESHOLD)
+
+        val activas = windows.filterIndexed { i, _ -> energias[i] >= umbral }
+        ultimoUmbralActividad = umbral
+
+        Log.i(
+            TAG,
+            "Filtro de actividad autocalibrado: suelo(p$NOISE_FLOOR_PERCENTILE)=" +
+                "${"%.4f".format(suelo)} -> umbral=${"%.4f".format(umbral)} " +
+                "(k=$NOISE_FLOOR_K, acotado a [$MIN_THRESHOLD, $MAX_THRESHOLD]); " +
+                "${activas.size}/${windows.size} ventanas activas"
+        )
+
+        // Si el filtro se lo lleva casi todo, algo va mal en la calibración y
+        // es preferible entrenar con material sucio que no entrenar.
+        if (activas.size < MIN_WINDOWS_AFTER_FILTER) {
+            Log.w(
+                TAG,
+                "El filtro dejó sólo ${activas.size} ventanas; se ignora y se " +
+                    "usan las ${windows.size} originales. Revisar la calibración."
+            )
+            return windows
+        }
+        return activas
     }
 
     /**
@@ -300,12 +432,38 @@ class WindowSegmenter(
         /**
          * Sesiones entre las que se reparte el tope.
          *
-         * 20 x 40 ventanas es el mismo orden que las 24 sesiones por sujeto de
-         * HMOG, y deja cada sesión con material suficiente para valer como
-         * unidad de partición. Subirlo mucho adelgaza cada sesión hasta que
-         * deja de representar un contexto de uso.
+         * Era 20 (el orden de las 24 sesiones por sujeto de HMOG). Se sube a
+         * 30 al introducir el filtro de actividad: medido, con el filtro
+         * puesto 20 sesiones ya NO llenaban las 800 ventanas en el segundo
+         * terminal (se quedaba en 747), porque cada sesión aporta menos tras
+         * filtrar. Con 30 vuelven a llenarse en los dos.
+         *
+         * De paso mejora la partición: `DatasetSplitter` reparte sesiones
+         * ENTERAS, así que se pasa de ~12/4/4 a ~18/6/6 sesiones en
+         * train/val/test, y el conjunto ciego descansa sobre más contextos de
+         * uso distintos.
          */
-        const val DEFAULT_TARGET_SESSIONS = 20
+        const val DEFAULT_TARGET_SESSIONS = 30
+
+        /** Percentil del histórico propio que estima el suelo de ruido. */
+        const val NOISE_FLOOR_PERCENTILE = 5.0
+
+        /**
+         * Cuántas veces el suelo de ruido. Heredado de la calibración ya
+         * validada en campo: el umbral del gate de arranque se fijó como ~8x
+         * la energía en reposo (0.011-0.013 -> 0.10).
+         */
+        const val NOISE_FLOOR_K = 8.0f
+
+        /** Acotado del umbral autocalibrado, para que no se dispare. */
+        const val MIN_THRESHOLD = 0.01f
+        const val MAX_THRESHOLD = 0.10f
+
+        /** Por debajo de esto el p5 no describe nada y no se filtra. */
+        const val MIN_WINDOWS_TO_CALIBRATE = 500
+
+        /** Si el filtro deja menos que esto, se descarta el filtro. */
+        const val MIN_WINDOWS_AFTER_FILTER = 200
 
         /** Por debajo de esto una sesión no aporta y sí fragmenta la partición. */
         const val DEFAULT_MIN_WINDOWS_PER_SESSION = 8

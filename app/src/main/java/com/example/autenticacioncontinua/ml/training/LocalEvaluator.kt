@@ -3,6 +3,7 @@ package com.example.autenticacioncontinua.ml.training
 import android.util.Log
 import com.example.autenticacioncontinua.domain.ml.SensorWindow
 import com.example.autenticacioncontinua.ml.data.BackgroundPool
+import com.example.autenticacioncontinua.ml.data.WindowEnergy
 import com.example.autenticacioncontinua.ml.metrics.BinaryMetrics
 import com.example.autenticacioncontinua.ml.model.HeadStore
 import com.example.autenticacioncontinua.ml.model.TFLiteModelManager
@@ -15,9 +16,9 @@ import kotlin.random.Random
  * Métricas que el cliente devuelve al servidor en una ronda de `evaluate`.
  *
  * @param calibratedThreshold umbral obtenido cruzando ventanas genuinas de
- *   ENTRENAMIENTO con el pool de background de CALIBRACIÓN. Es el único
- *   umbral aplicable en producción; nunca ha visto las etiquetas de este
- *   conjunto.
+ *   CALIBRACIÓN (no vistas en entrenamiento) con el pool de background de
+ *   CALIBRACIÓN. Es el único umbral aplicable en producción; nunca ha visto
+ *   las etiquetas de este conjunto.
  */
 data class EvaluationResult(
     val loss: Float,
@@ -44,6 +45,21 @@ data class EvaluationResult(
  * (`BACKGROUND_TRAIN`), y el umbral se calibra contra el pool DISJUNTO de
  * calibración (`BACKGROUND_CALIB`). Esa separación es lo que impide que el
  * umbral esté ajustado a los mismos impostores contra los que se mide el FAR.
+ *
+ * EL LADO GENUINO NECESITA LA MISMA SEPARACIÓN, y no la tenía (pendiente B2).
+ * Calibrar con `local.train` —ventanas con las que el modelo ACABA de
+ * entrenar— sitúa el cruce FAR/FRR donde están las puntuaciones
+ * sobreajustadas, ~1.0. En una sesión distinta las genuinas puntúan más bajo y
+ * caen todas por debajo: medido el 2026-08-11, `far=0.0 frr=1.0
+ * umbral=0.9984564`, o sea un sistema que rechaza al usuario legítimo el 100%
+ * de las veces. El EER sobrevivía sólo porque barre la ROC y no depende del
+ * umbral.
+ *
+ * Por eso [evaluate] recibe [calibrationWindows] aparte del conjunto medido.
+ * Quien llama debe pasar genuinas que cumplan LAS DOS condiciones:
+ *   1. no vistas en entrenamiento (si no, vuelve el FRR=1.0), y
+ *   2. disjuntas del conjunto que se mide (si no, el FRR sale optimista).
+ * Para la medición final sobre test eso es exactamente `validation`.
  */
 class LocalEvaluator(
     private val modelManager: TFLiteModelManager,
@@ -58,26 +74,48 @@ class LocalEvaluator(
     suspend fun evaluate(
         globalEncoder: FloatArray,
         evaluationWindows: List<SensorWindow>,
-        genuineTrainWindows: List<SensorWindow>,
+        calibrationWindows: List<SensorWindow>,
+        emparejarImpostores: Boolean = true,
         seed: Long
     ): EvaluationResult = withContext(Dispatchers.Default) {
 
         modelManager.setEncoderWeights(globalEncoder)
         headStore.load()?.let { modelManager.setHeadWeights(it) }
 
+        // El emparejado produce UNA impostora por genuina, así que sólo es
+        // equivalente al muestreo anterior si el ratio es 1.0. Se comprueba en
+        // vez de asumirlo: este proyecto ya perdió 18 rondas por un contrato
+        // que dejó de cumplirse sin que nadie se enterara.
+        require(manifest.backgroundRatio == 1.0f) {
+            "El muestreo emparejado asume background_ratio=1.0, pero el " +
+                "manifiesto declara ${manifest.backgroundRatio}. Ajusta " +
+                "sampleMatched para respetar el ratio antes de cambiarlo."
+        }
+
         val random = Random(seed)
 
         // — Conjunto etiquetado: genuinas de validación + impostoras reales —
+        // Las impostoras se emparejan por energía con las genuinas: sin eso,
+        // una parte del AUC sale de que HMOG se movía más (medido: 0.72-0.81
+        // sólo con la energía del acelerómetro), no de biometría. Ver
+        // BackgroundPool.sampleMatched.
         val genuineWindows = evaluationWindows.map { it.values }
-        val impostorCount = (genuineWindows.size * manifest.backgroundRatio).toInt()
-        val impostorWindows = backgroundTrainPool.sample(impostorCount, random)
+        val energias = FloatArray(genuineWindows.size) {
+            WindowEnergy.accStdMedio(genuineWindows[it], manifest.nFeatures)
+        }
+        val impostorWindows = if (emparejarImpostores) {
+            backgroundTrainPool.sampleMatched(energias, random)
+        } else {
+            backgroundTrainPool.sample(genuineWindows.size, random)
+        }
 
         val all = genuineWindows + impostorWindows
         val labels = IntArray(all.size) { if (it < genuineWindows.size) 1 else 0 }
         val scores = modelManager.scoreBatch(all)
 
         // — Umbral calibrado, sin mirar las etiquetas de este conjunto —
-        val calibratedThreshold = calibrateThreshold(genuineTrainWindows, random)
+        val calibratedThreshold =
+            calibrateThreshold(calibrationWindows, random, emparejarImpostores)
         // Se persiste para que la autenticación en tiempo real aplique el
         // mismo umbral que se acaba de medir, en lugar del poblacional por
         // defecto.
@@ -94,10 +132,16 @@ class LocalEvaluator(
             frr = frr,
             calibratedThreshold = calibratedThreshold
         )
+        // FAR y FRR van en el log junto al EER a propósito: un EER decente con
+        // FRR=1.0 es un sistema que no funciona, y sólo se ve mirando las dos
+        // tasas por separado.
         Log.i(
             TAG,
             "val: n=${result.numExamples} auc=${"%.4f".format(result.auc)} " +
-                "eer=${"%.4f".format(result.eer)} thr=${"%.3f".format(result.calibratedThreshold)}"
+                "eer=${"%.4f".format(result.eer)} far=${"%.4f".format(result.far)} " +
+                "frr=${"%.4f".format(result.frr)} " +
+                "thr=${"%.6f".format(result.calibratedThreshold)} " +
+                "(calibrado con ${calibrationWindows.size} genuinas)"
         )
         result
     }
@@ -111,17 +155,28 @@ class LocalEvaluator(
      * optimista que parecería correcto.
      */
     private fun calibrateThreshold(
-        genuineTrainWindows: List<SensorWindow>,
-        random: Random
+        calibrationWindows: List<SensorWindow>,
+        random: Random,
+        emparejarImpostores: Boolean
     ): Float {
-        if (backgroundCalibPool.isEmpty() || genuineTrainWindows.isEmpty()) {
+        if (backgroundCalibPool.isEmpty() || calibrationWindows.isEmpty()) {
             Log.w(TAG, "Sin pool de calibración: se usa el umbral por defecto")
             return manifest.decisionThreshold
         }
-        val genuineScores = modelManager.scoreBatch(genuineTrainWindows.map { it.values })
-        val calibWindows = backgroundCalibPool.sample(
-            minOf(CALIBRATION_POOL_SIZE, backgroundCalibPool.size), random
-        )
+        val genuineScores = modelManager.scoreBatch(calibrationWindows.map { it.values })
+        // También emparejado: si el fondo de calibración se mueve más que las
+        // genuinas, el cruce FAR/FRR cae donde no debe y el umbral operativo
+        // sale sesgado por la misma razón de dominio.
+        val energiasCalib = FloatArray(calibrationWindows.size) {
+            WindowEnergy.accStdMedio(calibrationWindows[it].values, manifest.nFeatures)
+        }
+        val calibWindows = if (emparejarImpostores) {
+            backgroundCalibPool.sampleMatched(energiasCalib, random)
+        } else {
+            backgroundCalibPool.sample(
+                minOf(CALIBRATION_POOL_SIZE, backgroundCalibPool.size), random
+            )
+        }
         val backgroundScores = modelManager.scoreBatch(calibWindows)
         return metrics.calibrateThreshold(
             genuineScores, backgroundScores, manifest.decisionThreshold

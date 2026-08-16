@@ -23,8 +23,56 @@ android {
         //                          una rafaga por proceso, enfriamiento
         //                          congelado, COOLDOWN y DAILY_LIMIT sin
         //                          salida. Ver PENDIENTES.txt.
-        versionCode = 2
-        versionName = "1.1"
+        //   3 / 1.2  (2026-08-15)  pendiente B2: el umbral se calibra con
+        //                          validacion, no con train. Antes salia
+        //                          far=0.0 frr=1.0, o sea un sistema que
+        //                          rechazaba al usuario legitimo siempre.
+        //   4 / 1.3  (2026-08-15)  guarda de reentrada en
+        //                          FederatedLearningService: un segundo
+        //                          INICIAR FL lanzaba una segunda sesion en el
+        //                          mismo proceso y el servidor contaba el
+        //                          telefono dos veces en FedAvg.
+        //   5 / 1.4  (2026-08-15)  pendiente J: el cliente manda su client_id
+        //                          en las metricas de fit para que el servidor
+        //                          detecte dos conexiones del mismo telefono.
+        //   6 / 1.5  (2026-08-15)  pendientes A2 y E: permiso de exencion de
+        //                          bateria (que faltaba en el manifiesto),
+        //                          pantalla de proteccion, vigia de
+        //                          WorkManager y diario de eventos.
+        //                          BD v5 -> v6.
+        //   7 / 1.6  (2026-08-15)  pendiente C: filtro de actividad con umbral
+        //                          autocalibrado por dispositivo (k*suelo de
+        //                          ruido propio), aplicado ANTES de capWindows;
+        //                          TARGET_SESSIONS 20 -> 30; e impostores
+        //                          emparejados por energia para neutralizar el
+        //                          confound de dominio con HMOG.
+        //   8 / 1.7  (2026-08-15)  modo de ablacion dictado por el SERVIDOR
+        //                          (GET /api/model/info -> "ablation"), para
+        //                          medir el efecto del filtro y del emparejado
+        //                          con el MISMO APK en las dos condiciones.
+        //   9 / 1.8  (2026-08-16)  tercer modo de ablacion 'matched_off'
+        //                          (filtro SI, emparejado NO): aisla el efecto
+        //                          del emparejado con el mismo conjunto de
+        //                          ventanas y las mismas genuinas de test.
+        //  10 / 1.9  (2026-08-16)  pendiente G: modo 'peer'. Los impostores
+        //                          pueden venir de OTRO PARTICIPANTE REAL,
+        //                          cargados desde filesDir (no van en el APK).
+        //                          La app aborta si el modo del servidor y el
+        //                          pool cargado no coinciden.
+        //  11 / 1.10 (2026-08-16)  recogida del corpus de fondo y captura de
+        //                          impostor en el MISMO dispositivo:
+        //                          - exportacion de la BASE (zip por
+        //                            FileProvider) en vez del CSV, que cargaba
+        //                            las dos tablas enteras en memoria;
+        //                          - pantalla de captura etiquetada, con
+        //                            seudonimo de participante, 30 s de
+        //                            aclimatacion y rafagas de 3 min iguales a
+        //                            las automaticas;
+        //                          - WindowSegmenter EXCLUYE del conjunto
+        //                            genuino los tramos de otras personas.
+        //                          BD v6 -> v7 (tabla labeled_sessions).
+        versionCode = 11
+        versionName = "1.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Backend en el PC de desarrollo, misma red Wi-Fi que el teléfono.
@@ -128,6 +176,9 @@ dependencies {
     // Koin
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
+
+    // Red de seguridad del servicio de recoleccion (pendiente A2).
+    implementation(libs.work.runtime.ktx)
     
     // --- TFLite (LiteRT) — inferencia y entrenamiento on-device ---
     implementation("org.tensorflow:tensorflow-lite:2.16.1")

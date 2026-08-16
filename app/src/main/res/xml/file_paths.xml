@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Rutas que la app puede ceder a otra aplicación (WhatsApp, correo, Drive) a
+  través de FileProvider.
+
+  Se publica ÚNICAMENTE `cacheDir/compartir`, donde `DataExportServiceImpl`
+  deja el zip de la base. No se publica `databases/` ni `filesDir`: ahí viven
+  la base en uso y los pools de impostores, y nada de eso debe poder salir por
+  un intent que se equivoque de ruta.
+-->
+<paths>
+    <cache-path
+        name="compartir"
+        path="compartir/" />
+</paths>

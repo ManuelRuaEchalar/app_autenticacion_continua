@@ -3,12 +3,16 @@ package com.example.autenticacioncontinua.domain.session
 import android.util.Log
 import com.example.autenticacioncontinua.domain.model.AccelerometerData
 import com.example.autenticacioncontinua.domain.model.DailySessionStat
+import com.example.autenticacioncontinua.domain.model.DeviceEventType
 import com.example.autenticacioncontinua.domain.model.GyroscopeData
 import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
+import com.example.autenticacioncontinua.domain.repository.IDeviceEventRepository
 import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
+import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.domain.sensor.IAccelerometerSensor
 import com.example.autenticacioncontinua.domain.sensor.IGyroscopeSensor
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -49,7 +53,9 @@ class SessionManagerImpl(
     private val gyroscopeSensor: IGyroscopeSensor,
     private val accelerometerSensor: IAccelerometerSensor,
     private val gyroscopeRepository: IGyroscopeRepository,
-    private val accelerometerRepository: IAccelerometerRepository
+    private val accelerometerRepository: IAccelerometerRepository,
+    private val deviceEvents: IDeviceEventRepository,
+    private val labeledSessions: ILabeledSessionRepository
 ) : ISessionManager {
 
     companion object {
@@ -164,6 +170,9 @@ class SessionManagerImpl(
     @Volatile private var currentState = SessionState.IDLE
     @Volatile private var screenOn = false
 
+    /** Resumen de la última medida de [hayUsoReal], para el diario. */
+    @Volatile private var ultimaMedidaMovimiento = ""
+
     /** Instante (reloj de pared) a partir del cual se puede grabar otra vez. */
     @Volatile private var nextBoutAllowedAtMs = 0L
 
@@ -192,6 +201,11 @@ class SessionManagerImpl(
         Log.d(TAG, "Device unlocked / screen on")
         screenOn = true
         if (currentState == SessionState.RECORDING) return
+        // Una captura etiquetada manda sobre la recolección automática: si al
+        // desbloquear se cayera a MONITORING_USAGE, `startCountdown` acabaría
+        // arrancando una ráfaga normal encima de la del impostor y sus muestras
+        // se guardarían como uso ambiental del dueño.
+        if (currentState == SessionState.LABELED_CAPTURE) return
 
         if (currentState == SessionState.DAILY_LIMIT_REACHED) {
             if (dailyLimitDay == getCurrentDateString()) return
@@ -228,6 +242,15 @@ class SessionManagerImpl(
             // siguiente encendido pueda grabar otra vez es lo que multiplica
             // el número de sesiones distintas.
             stopRecording()
+        }
+
+        // Una captura etiquetada con la pantalla apagada es el teléfono sobre
+        // la mesa, no una persona usándolo: se corta. El tramo queda cerrado
+        // por el `finally` de la captura y la pantalla avisa al operador para
+        // que la repita, que es preferible a quedarse con dos minutos de mesa
+        // etiquetados como comportamiento de alguien.
+        if (currentState == SessionState.LABELED_CAPTURE) {
+            recordingJob?.cancel()
         }
 
         // COOLDOWN y DAILY_LIMIT_REACHED sobreviven al apagado de pantalla.
@@ -282,6 +305,143 @@ class SessionManagerImpl(
         return ((restanteMs + 59_999) / 60_000).toInt()
     }
 
+    /**
+     * Captura de laboratorio atribuida a una persona concreta.
+     *
+     * EL ORDEN IMPORTA: primero se anota la etiqueta en la base y sólo si eso
+     * sale bien se enciende un sensor. Al revés —grabar y etiquetar después—
+     * un fallo de escritura dejaría tres minutos de datos de otra persona
+     * dentro del histórico del dueño, sin marca, indistinguibles y ya
+     * mezclados con su material de entrenamiento. Por eso [abrir] propaga la
+     * excepción en vez de tragársela como hace el diario.
+     *
+     * La fila se abre ANTES de la aclimatación a propósito: así el intervalo
+     * excluido cubre también esos 30 s y ninguna muestra que se cuele por el
+     * camino puede acabar contando como genuina.
+     */
+    override suspend fun startLabeledCapture(
+        participantId: String,
+        isOwner: Boolean,
+        note: String,
+        onFase: (LabeledCaptureFase) -> Unit
+    ): Boolean {
+        val id = participantId.trim()
+        if (id.isBlank()) {
+            onFase(LabeledCaptureFase.Fallida("Falta el identificador del participante"))
+            return false
+        }
+        if (recordingJob?.isActive == true || currentState == SessionState.LABELED_CAPTURE) {
+            onFase(
+                LabeledCaptureFase.Fallida(
+                    "Hay una grabación en curso. Espera a que termine."
+                )
+            )
+            return false
+        }
+
+        // Que la recolección automática no arranque una ráfaga encima. El
+        // estado pasa a LABELED_CAPTURE, que ninguna de las dos rutas
+        // automáticas considera punto de partida válido.
+        countdownJob?.cancel()
+        nextBoutJob?.cancel()
+
+        val filaId = try {
+            labeledSessions.abrir(id, isOwner, note)
+        } catch (e: Exception) {
+            Log.e(TAG, "No se pudo anotar la sesión etiquetada; NO se graba nada", e)
+            onFase(LabeledCaptureFase.Fallida("No se pudo anotar la etiqueta: ${e.message}"))
+            return false
+        }
+
+        currentState = SessionState.LABELED_CAPTURE
+        deviceEvents.record(
+            DeviceEventType.LABELED_CAPTURE_STARTED,
+            "$id${if (isOwner) " (control del dueño)" else " (impostor)"}" +
+                if (note.isNotBlank()) " · $note" else ""
+        )
+
+        val duracionMs = CollectionPolicy.LABELED_BOUT_MINUTES * 60_000L
+        var completada = false
+
+        // LAZY para poder asignar `recordingJob` ANTES de que el cuerpo empiece
+        // a correr: es el campo que mira el guard de `startRecording`, y con un
+        // arranque inmediato hay una rendija en la que una ráfaga automática lo
+        // vería todavía a null.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val inicioCaptura = System.currentTimeMillis()
+            try {
+                var restante = CollectionPolicy.acclimationSeconds
+                while (restante > 0 && isActive) {
+                    onFase(LabeledCaptureFase.Aclimatacion(restante))
+                    delay(1_000)
+                    restante--
+                }
+                if (!isActive) return@launch
+
+                val t0 = System.currentTimeMillis()
+                gyroscopeSensor.startListening()
+                accelerometerSensor.startListening()
+
+                val ticker = launch {
+                    while (isActive) {
+                        val queda = duracionMs - (System.currentTimeMillis() - t0)
+                        if (queda <= 0) break
+                        onFase(LabeledCaptureFase.Grabando(((queda + 999) / 1000).toInt()))
+                        delay(1_000)
+                    }
+                }
+                try {
+                    capturarAmbosSensores(
+                        maxMs = duracionMs,
+                        dateStr = getCurrentDateString(),
+                        startTime = t0
+                    )
+                } finally {
+                    ticker.cancel()
+                    stopAllSensors()
+                }
+
+                completada = true
+                onFase(LabeledCaptureFase.Terminada(System.currentTimeMillis() - t0))
+            } finally {
+                withContext(NonCancellable) {
+                    stopAllSensors()
+                    // El tramo se cierra pase lo que pase. Un tramo abierto se
+                    // excluye igual (se le supone la duración máxima), pero
+                    // deja de saberse cuánto duró de verdad.
+                    runCatching { labeledSessions.cerrar(filaId, System.currentTimeMillis()) }
+                        .onFailure { Log.e(TAG, "No se pudo cerrar el tramo $filaId", it) }
+                    deviceEvents.record(
+                        DeviceEventType.LABELED_CAPTURE_FINISHED,
+                        "$id · ${(System.currentTimeMillis() - inicioCaptura) / 1000} s" +
+                            if (completada) "" else " · INTERRUMPIDA"
+                    )
+                }
+                if (currentState == SessionState.LABELED_CAPTURE) {
+                    currentState = SessionState.IDLE
+                }
+                if (!completada) {
+                    onFase(
+                        LabeledCaptureFase.Fallida(
+                            "Captura interrumpida. Repítela: no apagues la pantalla " +
+                                "ni salgas de la app mientras graba."
+                        )
+                    )
+                }
+            }
+        }
+        recordingJob = job
+        job.start()
+        job.join()
+        return completada
+    }
+
+    override fun cancelLabeledCapture() {
+        if (currentState != SessionState.LABELED_CAPTURE) return
+        Log.d(TAG, "Captura etiquetada cancelada por el operador")
+        recordingJob?.cancel()
+    }
+
     // ── Private logic ────────────────────────────────────────────────────
 
     /**
@@ -329,6 +489,14 @@ class SessionManagerImpl(
                     return@launch
                 }
                 Log.d(TAG, "Pantalla encendida pero dispositivo quieto: no se graba")
+                // Contar los rechazos es lo que dirá si MIN_ACTIVE_FRACTION
+                // está bien puesto: muchos rechazos con el móvil claramente en
+                // uso = umbral demasiado exigente, y eso hoy sólo se ve en un
+                // logcat que a las tres horas ya no existe.
+                deviceEvents.record(
+                    DeviceEventType.GATE_REJECTED,
+                    ultimaMedidaMovimiento
+                )
             }
         }
     }
@@ -389,14 +557,13 @@ class SessionManagerImpl(
         val fraccion =
             if (segundosTotales > 0) segundosActivos.toFloat() / segundosTotales else 0f
         val energiaMedia = if (segundosTotales > 0) energiaSuma / segundosTotales else 0.0
-        Log.d(
-            TAG,
-            "Movimiento: $segundosActivos/$segundosTotales s activos " +
+        ultimaMedidaMovimiento =
+            "$segundosActivos/$segundosTotales s activos " +
                 "(fracción ${"%.2f".format(fraccion)}) | " +
                 "energía media=${"%.4f".format(energiaMedia)} " +
                 "max=${"%.4f".format(energiaMax)} " +
                 "umbral=$MOTION_THRESHOLD_MS2 m/s²"
-        )
+        Log.d(TAG, "Movimiento: $ultimaMedidaMovimiento")
         // Se exige un mínimo de segundos medidos para no decidir con dos
         // muestras si el sensor tardó en arrancar.
         return segundosTotales >= MIN_SECONDS_SAMPLED && fraccion >= MIN_ACTIVE_FRACTION
@@ -458,6 +625,13 @@ class SessionManagerImpl(
             "▶ Ráfaga de $boutMinutes min (llevados " +
                 "${stat.totalMinutesRecorded}/$DAILY_LIMIT_MINUTES min hoy)"
         )
+        scope.launch {
+            deviceEvents.record(
+                DeviceEventType.BOUT_STARTED,
+                "$boutMinutes min · llevados ${stat.totalMinutesRecorded}/" +
+                    "$DAILY_LIMIT_MINUTES min hoy · $ultimaMedidaMovimiento"
+            )
+        }
 
         gyroscopeSensor.startListening()
         accelerometerSensor.startListening()
@@ -466,63 +640,20 @@ class SessionManagerImpl(
         val maxRecordingMs = boutMinutes * 60 * 1000L
 
         recordingJob = scope.launch {
-            val gyroBuffer = mutableListOf<GyroscopeData>()
-            val accelBuffer = mutableListOf<AccelerometerData>()
-
-            try {
-                withTimeoutOrNull(maxRecordingMs) {
-                    coroutineScope {
-                        launch {
-                            var lastSavedMinute = 0
-                            gyroscopeSensor.getSensorDataFlow()
-                                .buffer()
-                                .collect { rawData ->
-                                    gyroBuffer.add(rawData.copy(dateString = todayStr))
-                                    if (gyroBuffer.size >= BATCH_SIZE) {
-                                        gyroscopeRepository.saveGyroscopeData(gyroBuffer.toList())
-                                        gyroBuffer.clear()
-                                    }
-
-                                    val elapsedMinutes =
-                                        ((System.currentTimeMillis() - startTime) / 60_000).toInt()
-                                    if (elapsedMinutes > lastSavedMinute) {
-                                        lastSavedMinute = elapsedMinutes
-                                        val updated = DailySessionStat(
-                                            todayStr,
-                                            stat.totalMinutesRecorded + elapsedMinutes
-                                        )
-                                        gyroscopeRepository.updateDailySessionStat(updated)
-                                        Log.d(
-                                            TAG,
-                                            "  Progreso: ${updated.totalMinutesRecorded}" +
-                                                "/$DAILY_LIMIT_MINUTES min"
-                                        )
-                                    }
-                                }
-                        }
-                        launch {
-                            accelerometerSensor.getSensorDataFlow()
-                                .buffer()
-                                .collect { rawData ->
-                                    accelBuffer.add(rawData.copy(dateString = todayStr))
-                                    if (accelBuffer.size >= BATCH_SIZE) {
-                                        accelerometerRepository
-                                            .saveAccelerometerData(accelBuffer.toList())
-                                        accelBuffer.clear()
-                                    }
-                                }
-                        }
-                    }
-                }
-            } finally {
-                withContext(NonCancellable) {
-                    if (gyroBuffer.isNotEmpty()) {
-                        gyroscopeRepository.saveGyroscopeData(gyroBuffer.toList())
-                    }
-                    if (accelBuffer.isNotEmpty()) {
-                        accelerometerRepository.saveAccelerometerData(accelBuffer.toList())
-                    }
-                }
+            capturarAmbosSensores(
+                maxMs = maxRecordingMs,
+                dateStr = todayStr,
+                startTime = startTime
+            ) { elapsedMinutes ->
+                val updated = DailySessionStat(
+                    todayStr,
+                    stat.totalMinutesRecorded + elapsedMinutes
+                )
+                gyroscopeRepository.updateDailySessionStat(updated)
+                Log.d(
+                    TAG,
+                    "  Progreso: ${updated.totalMinutesRecorded}/$DAILY_LIMIT_MINUTES min"
+                )
             }
 
             // Sólo se llega aquí si la ráfaga agotó su tiempo: los dos
@@ -534,6 +665,81 @@ class SessionManagerImpl(
             // y que el siguiente encendido pueda grabar otra vez es lo que
             // multiplica el número de sesiones distintas.
             finishBout(stat, todayStr, boutMinutes)
+        }
+    }
+
+    /**
+     * Vuelca los dos sensores a la base durante [maxMs].
+     *
+     * Extraído para que la recolección automática y la captura etiquetada
+     * compartan LA MISMA copia de la parte delicada, que es el `finally` bajo
+     * `NonCancellable`: sin él, una ráfaga cortada a mitad —pantalla apagada,
+     * captura cancelada— pierde hasta [BATCH_SIZE] muestras por sensor que ya
+     * estaban en memoria. Duplicar este bloque era garantizar que una de las
+     * dos copias acabase divergiendo.
+     *
+     * El plazo lo lleva un único `withTimeoutOrNull` sobre los dos colectores,
+     * no una corrutina vigilando a la otra: así no hay carrera que perder al
+     * cancelar (ver el comentario de [startRecording]).
+     *
+     * @param onMinuto se invoca al cruzar cada minuto completo, con los minutos
+     *   transcurridos. La recolección automática lo usa para el contador del
+     *   día; la captura etiquetada no lo necesita y pasa `null`.
+     */
+    private suspend fun capturarAmbosSensores(
+        maxMs: Long,
+        dateStr: String,
+        startTime: Long,
+        onMinuto: (suspend (Int) -> Unit)? = null
+    ) {
+        val gyroBuffer = mutableListOf<GyroscopeData>()
+        val accelBuffer = mutableListOf<AccelerometerData>()
+
+        try {
+            withTimeoutOrNull(maxMs) {
+                coroutineScope {
+                    launch {
+                        var lastSavedMinute = 0
+                        gyroscopeSensor.getSensorDataFlow()
+                            .buffer()
+                            .collect { rawData ->
+                                gyroBuffer.add(rawData.copy(dateString = dateStr))
+                                if (gyroBuffer.size >= BATCH_SIZE) {
+                                    gyroscopeRepository.saveGyroscopeData(gyroBuffer.toList())
+                                    gyroBuffer.clear()
+                                }
+
+                                val elapsedMinutes =
+                                    ((System.currentTimeMillis() - startTime) / 60_000).toInt()
+                                if (elapsedMinutes > lastSavedMinute) {
+                                    lastSavedMinute = elapsedMinutes
+                                    onMinuto?.invoke(elapsedMinutes)
+                                }
+                            }
+                    }
+                    launch {
+                        accelerometerSensor.getSensorDataFlow()
+                            .buffer()
+                            .collect { rawData ->
+                                accelBuffer.add(rawData.copy(dateString = dateStr))
+                                if (accelBuffer.size >= BATCH_SIZE) {
+                                    accelerometerRepository
+                                        .saveAccelerometerData(accelBuffer.toList())
+                                    accelBuffer.clear()
+                                }
+                            }
+                    }
+                }
+            }
+        } finally {
+            withContext(NonCancellable) {
+                if (gyroBuffer.isNotEmpty()) {
+                    gyroscopeRepository.saveGyroscopeData(gyroBuffer.toList())
+                }
+                if (accelBuffer.isNotEmpty()) {
+                    accelerometerRepository.saveAccelerometerData(accelBuffer.toList())
+                }
+            }
         }
     }
 
@@ -552,10 +758,19 @@ class SessionManagerImpl(
         val total = stat.totalMinutesRecorded + boutMinutes
         gyroscopeRepository.updateDailySessionStat(DailySessionStat(todayStr, total))
 
+        deviceEvents.record(
+            DeviceEventType.BOUT_FINISHED,
+            "$boutMinutes min grabados · $total/$DAILY_LIMIT_MINUTES min hoy"
+        )
+
         if (total >= DAILY_LIMIT_MINUTES) {
             dailyLimitDay = todayStr
             currentState = SessionState.DAILY_LIMIT_REACHED
             Log.d(TAG, "✓ Presupuesto diario completo ($total/$DAILY_LIMIT_MINUTES min)")
+            deviceEvents.record(
+                DeviceEventType.DAILY_LIMIT,
+                "$total/$DAILY_LIMIT_MINUTES min"
+            )
         } else {
             currentState = SessionState.COOLDOWN
             Log.d(

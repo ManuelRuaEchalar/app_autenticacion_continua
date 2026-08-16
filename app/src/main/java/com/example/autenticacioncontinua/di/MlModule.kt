@@ -6,6 +6,7 @@ import com.example.autenticacioncontinua.data.repository.ResourceMeasurementRepo
 import com.example.autenticacioncontinua.domain.ml.IWindowSegmenter
 import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
 import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
+import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.domain.repository.IResourceMeasurementRepository
 import com.example.autenticacioncontinua.ml.data.BackgroundPool
 import com.example.autenticacioncontinua.ml.data.ClientIdentity
@@ -66,11 +67,13 @@ val mlModule = module {
     single(named(BACKGROUND_TRAIN)) {
         val manifest = get<ModelManifest>()
         manifest.backgroundTrainFile?.let {
-            BackgroundPool.fromAssets(
+            BackgroundPool.fromFileOrAssets(
                 context = androidContext(),
                 assetName = it,
+                overrideFileName = "background_peer_train.bin",
                 windowFloats = manifest.windowFloats,
-                expectedWindows = manifest.backgroundTrainWindows
+                expectedWindows = manifest.backgroundTrainWindows,
+                nFeatures = manifest.nFeatures
             )
         } ?: BackgroundPool.empty(manifest.windowFloats)
     }
@@ -81,11 +84,13 @@ val mlModule = module {
     single(named(BACKGROUND_CALIB)) {
         val manifest = get<ModelManifest>()
         manifest.backgroundCalibFile?.let {
-            BackgroundPool.fromAssets(
+            BackgroundPool.fromFileOrAssets(
                 context = androidContext(),
                 assetName = it,
+                overrideFileName = "background_peer_calib.bin",
                 windowFloats = manifest.windowFloats,
-                expectedWindows = manifest.backgroundCalibWindows
+                expectedWindows = manifest.backgroundCalibWindows,
+                nFeatures = manifest.nFeatures
             )
         } ?: BackgroundPool.empty(manifest.windowFloats)
     }
@@ -94,6 +99,7 @@ val mlModule = module {
         WindowSegmenter(
             accelerometerRepository = get<IAccelerometerRepository>(),
             gyroscopeRepository = get<IGyroscopeRepository>(),
+            labeledSessionRepository = get<ILabeledSessionRepository>(),
             manifest = get(),
             scaler = get()
         )

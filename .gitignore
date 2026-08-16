@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Registros del compilador de Kotlin: ruido de una compilacion concreta.
+.kotlin/

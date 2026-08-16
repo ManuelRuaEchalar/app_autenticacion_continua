@@ -68,16 +68,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 
 // ── Colors ───────────────────────────────────────────────────────────────
-private val DarkBg        = Color(0xFF0D1117)
-private val CardBg        = Color(0xFF161B22)
+// `internal` y no `private`: las tarjetas de protección y del diario viven en
+// su propio fichero (ProtectionAndDiary.kt) para que este no siga creciendo, y
+// necesitan la misma paleta. Duplicar los hex en dos sitios es cómo acaban
+// divergiendo.
+internal val DarkBg        = Color(0xFF0D1117)
+internal val CardBg        = Color(0xFF161B22)
 private val CardBorder    = Color(0xFF30363D)
-private val AccentCyan    = Color(0xFF58A6FF)
-private val AccentGreen   = Color(0xFF3FB950)
-private val AccentOrange  = Color(0xFFD29922)
+internal val AccentCyan    = Color(0xFF58A6FF)
+internal val AccentGreen   = Color(0xFF3FB950)
+internal val AccentOrange  = Color(0xFFD29922)
 private val AccentPurple  = Color(0xFFBC8CFF)
-private val AccentRed     = Color(0xFFF85149)
-private val TextPrimary   = Color(0xFFE6EDF3)
-private val TextSecondary = Color(0xFF8B949E)
+internal val AccentRed     = Color(0xFFF85149)
+internal val TextPrimary   = Color(0xFFE6EDF3)
+internal val TextSecondary = Color(0xFF8B949E)
 
 private val AppColorScheme = darkColorScheme(
     background = DarkBg,
@@ -119,7 +123,15 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainScreen()
+                    // Sin librería de navegación: son dos pantallas y una de
+                    // ellas sólo la abre el investigador. Un NavHost aquí sería
+                    // más andamiaje que función.
+                    val (enCaptura, setEnCaptura) = remember { mutableStateOf(false) }
+                    if (enCaptura) {
+                        LabeledCaptureScreen(onClose = { setEnCaptura(false) })
+                    } else {
+                        MainScreen(onAbrirCaptura = { setEnCaptura(true) })
+                    }
                 }
             }
         }
@@ -131,14 +143,71 @@ class MainActivity : ComponentActivity() {
 // ═════════════════════════════════════════════════════════════════════════
 
 @Composable
-fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
+fun MainScreen(
+    onAbrirCaptura: () -> Unit = {},
+    viewModel: MainViewModel = koinViewModel()
+) {
     val state by viewModel.uiState.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val (pidDialog, setPidDialog) = remember { mutableStateOf(false) }
+    val (pidInput, setPidInput) = remember { mutableStateOf("") }
 
-    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri ->
-        uri?.let { viewModel.exportDataToCsv(it) }
+    // Cuando el zip está listo se abre el selector de aplicación. Va en un
+    // LaunchedEffect y no en el onClick porque la exportación es asíncrona:
+    // con dos días de recolección el checkpoint y la compresión tardan varios
+    // segundos, y lanzar el intent antes de tenerlo compartiría un fichero a
+    // medias.
+    LaunchedEffect(state.databaseZip) {
+        state.databaseZip?.let { zip ->
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", zip
+            )
+            val enviar = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, zip.name)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(enviar, "Enviar la base de datos"))
+            viewModel.clearDatabaseZip()
+        }
+    }
+
+    if (pidDialog) {
+        AlertDialog(
+            onDismissRequest = { setPidDialog(false) },
+            title = { Text("Enviar base de datos", color = TextPrimary) },
+            text = {
+                Column {
+                    Text(
+                        "Escribe el seudónimo que se te asignó. Va en el nombre del " +
+                            "fichero para poder identificarlo al recibirlo.",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = pidInput,
+                        onValueChange = setPidInput,
+                        label = { Text("Seudónimo", color = TextSecondary) },
+                        placeholder = { Text("P1, P2…", color = TextSecondary) },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    setPidDialog(false)
+                    viewModel.exportDatabase(pidInput)
+                }) { Text("Preparar y enviar", color = AccentCyan) }
+            },
+            dismissButton = {
+                TextButton(onClick = { setPidDialog(false) }) {
+                    Text("Cancelar", color = TextSecondary)
+                }
+            },
+            containerColor = CardBg
+        )
     }
 
     LaunchedEffect(state.exportSuccessMessage) {
@@ -170,6 +239,11 @@ fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item { HeaderSection() }
+        // Va lo primero, antes incluso del estado de la sesión: si el
+        // dispositivo está desprotegido, nada de lo que diga el resto de la
+        // pantalla se va a cumplir. Es la pantalla que hay que mirar CON cada
+        // participante al darlo de alta (pendiente E).
+        item { ProtectionCard() }
         item { StatusCard(state) }
         item { ProgressCard(state) }
         item { DatabaseSizeCard(state) }
@@ -179,10 +253,16 @@ fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
         // pintan una fila por muestra: con una fecha seleccionada quedaban
         // cientos de filas por medio y el botón resultaba inalcanzable.
         item { FederatedLearningSection() }
+        item { DeviceDiaryCard() }
 
+        // Envío de la base al investigador. Sustituye al botón de CSV, que
+        // cargaba las dos tablas enteras en memoria: con los dos días de
+        // recolección de un participante eso es ~1 M de entidades y no cabe en
+        // el heap de un teléfono de gama media. El método sigue existiendo en
+        // `DataExportServiceImpl` para inspeccionar históricos pequeños a mano.
         item {
             androidx.compose.material3.Button(
-                onClick = { exportLauncher.launch("datos_sensores.csv") },
+                onClick = { setPidDialog(true) },
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 enabled = !state.isExporting,
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = AccentCyan)
@@ -194,11 +274,24 @@ fun MainScreen(viewModel: MainViewModel = koinViewModel()) {
                             modifier = Modifier.size(24.dp).padding(end = 8.dp),
                             strokeWidth = 2.dp
                         )
-                        Text("Exportando...", color = DarkBg, fontWeight = FontWeight.Bold)
+                        Text("Preparando la base...", color = DarkBg, fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    Text("Exportar datos a CSV", color = DarkBg, fontWeight = FontWeight.Bold)
+                    Text("Enviar base de datos", color = DarkBg, fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+
+        item {
+            androidx.compose.material3.Button(
+                onClick = onAbrirCaptura,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isExporting,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = CardBg
+                )
+            ) {
+                Text("🧪  Captura etiquetada", color = AccentOrange, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -326,6 +419,15 @@ fun StatusCard(state: UiState) {
             "Se recolectaron los ${CollectionPolicy.DAILY_LIMIT_MINUTES} minutos " +
                 "de datos IMU de hoy."
         )
+        // Tiene texto propio y no el de RECORDING a propósito: si el dueño ve
+        // "Grabando datos IMU" mientras otra persona sostiene el teléfono, no
+        // hay forma de notar que se está capturando en el modo equivocado hasta
+        // que los datos ya están en la base.
+        SessionState.LABELED_CAPTURE -> Triple(
+            "Captura etiquetada en curso", AccentOrange,
+            "Grabando una ráfaga atribuida a un participante concreto. Estos datos " +
+                "NO cuentan como uso ambiental del dueño."
+        )
     }
 
     Card(
@@ -336,7 +438,8 @@ fun StatusCard(state: UiState) {
         Column(modifier = Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (state.sessionState == SessionState.RECORDING ||
-                    state.sessionState == SessionState.MONITORING_USAGE
+                    state.sessionState == SessionState.MONITORING_USAGE ||
+                    state.sessionState == SessionState.LABELED_CAPTURE
                 ) {
                     PulsingDot(color = statusColor)
                 } else {

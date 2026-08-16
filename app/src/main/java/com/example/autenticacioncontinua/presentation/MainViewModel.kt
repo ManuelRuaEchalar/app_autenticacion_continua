@@ -38,7 +38,9 @@ data class UiState(
     val databaseSizeBytes: Long = 0L,
     val isExporting: Boolean = false,
     val exportSuccessMessage: String? = null,
-    val exportErrorMessage: String? = null
+    val exportErrorMessage: String? = null,
+    /** Zip de la base listo para compartir; la UI lanza el intent y lo limpia. */
+    val databaseZip: File? = null
 )
 
 class MainViewModel(
@@ -110,6 +112,44 @@ class MainViewModel(
                 _uiState.value = _uiState.value.copy(isExporting = false, exportErrorMessage = "Error al exportar: ${result.exceptionOrNull()?.message}")
             }
         }
+    }
+
+    /**
+     * Prepara la base para enviársela al investigador.
+     *
+     * Es la vía de recogida del corpus de fondo. Ver [IDataExportService.exportDatabaseZip]
+     * para por qué no se usa el CSV.
+     */
+    fun exportDatabase(participantId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isExporting = true,
+                exportSuccessMessage = null,
+                exportErrorMessage = null,
+                databaseZip = null
+            )
+            dataExportService.exportDatabaseZip(participantId)
+                .onSuccess { zip ->
+                    _uiState.value = _uiState.value.copy(
+                        isExporting = false,
+                        databaseZip = zip,
+                        exportSuccessMessage =
+                            "Base preparada (${zip.length() / (1024 * 1024)} MB). " +
+                                "Elige por dónde enviarla."
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(
+                        isExporting = false,
+                        exportErrorMessage = "No se pudo exportar la base: ${e.message}"
+                    )
+                }
+        }
+    }
+
+    /** El intent de compartir ya se lanzó; que no se relance en la recomposición. */
+    fun clearDatabaseZip() {
+        _uiState.value = _uiState.value.copy(databaseZip = null)
     }
 
     fun clearExportMessages() {

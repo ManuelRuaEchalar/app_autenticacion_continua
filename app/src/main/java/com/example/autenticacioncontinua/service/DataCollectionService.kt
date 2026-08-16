@@ -15,7 +15,10 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.autenticacioncontinua.MainActivity
+import com.example.autenticacioncontinua.device.protection.ProtectionStatus
+import com.example.autenticacioncontinua.domain.model.DeviceEventType
 import com.example.autenticacioncontinua.domain.repository.IAccelerometerRepository
+import com.example.autenticacioncontinua.domain.repository.IDeviceEventRepository
 import com.example.autenticacioncontinua.domain.repository.IGyroscopeRepository
 import com.example.autenticacioncontinua.domain.session.ISessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -37,6 +40,8 @@ class DataCollectionService : Service() {
     private val sessionManager: ISessionManager by inject()
     private val accelerometerRepository: IAccelerometerRepository by inject()
     private val gyroscopeRepository: IGyroscopeRepository by inject()
+    private val deviceEvents: IDeviceEventRepository by inject()
+    private val protectionStatus: ProtectionStatus by inject()
 
     private val purgeScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -44,6 +49,20 @@ class DataCollectionService : Service() {
         private const val TAG = "DataCollectionService"
         private const val CHANNEL_ID = "continuous_auth_channel"
         private const val NOTIFICATION_ID = 1
+
+        /**
+         * ¿Hay un servicio de recolección vivo EN ESTE PROCESO?
+         *
+         * Lo consulta [com.example.autenticacioncontinua.work.ServiceWatchdogWorker].
+         * Una bandera estática es exactamente la respuesta correcta aquí: si
+         * el sistema mató el proceso, el valor vuelve a `false` solo, que es
+         * justo el caso que el vigía tiene que detectar. `ActivityManager
+         * .getRunningServices` daría lo mismo con más ceremonia y está
+         * obsoleto desde API 26.
+         */
+        @Volatile
+        var estaVivo: Boolean = false
+            private set
 
         /**
          * Retención de datos crudos: algo más que los 14 días que lee
@@ -82,7 +101,9 @@ class DataCollectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        estaVivo = true
         createNotificationChannel()
+        anotarArranque()
 
         // Register the screen state receiver
         val filter = IntentFilter().apply {
@@ -122,6 +143,10 @@ class DataCollectionService : Service() {
             try {
                 val acc = accelerometerRepository.deleteAccelerometerDataOlderThan(cutoff)
                 val gyro = gyroscopeRepository.deleteGyroscopeDataOlderThan(cutoff)
+                // El diario comparte base con los sensores y se poda con el
+                // mismo criterio, para que no acabe siendo lo único que crece
+                // sin techo tras haber arreglado justo eso.
+                deviceEvents.purgeOlderThan(cutoff)
                 if (acc + gyro > 0) {
                     Log.i(TAG, "Purga: $acc filas de acelerómetro y $gyro de " +
                         "giroscopio anteriores a ${RETENTION_MS / 86_400_000} días")
@@ -141,6 +166,18 @@ class DataCollectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        estaVivo = false
+        // Se anota ANTES de cancelar `purgeScope`, y en un ámbito propio: si
+        // se lanzara en el que está a punto de morir, la anotación se
+        // cancelaría a mitad y el diario nunca registraría las muertes, que
+        // son justo las que interesan. `NonCancellable` no basta porque el
+        // scope se cancela entero unas líneas más abajo.
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            deviceEvents.record(
+                DeviceEventType.SERVICE_STOPPED,
+                "onDestroy — si no fue una parada manual, lo mató el sistema"
+            )
+        }
         super.onDestroy()
         try {
             unregisterReceiver(screenReceiver)
@@ -148,6 +185,29 @@ class DataCollectionService : Service() {
         sessionManager.stopMonitoring()
         purgeScope.cancel()
         Log.d(TAG, "Service destroyed")
+    }
+
+    /**
+     * Deja constancia del arranque y del estado de las exenciones.
+     *
+     * Lo segundo es lo que da valor a lo primero: saber que el servicio
+     * arrancó a las 15:04 no dice gran cosa; saber que arrancó DESPROTEGIDO
+     * explica por qué a las 15:28 ya no estaba.
+     */
+    private fun anotarArranque() {
+        purgeScope.launch {
+            deviceEvents.record(DeviceEventType.SERVICE_STARTED)
+            val estado = protectionStatus.current()
+            deviceEvents.record(
+                DeviceEventType.PROTECTION_STATUS,
+                "bateria_exenta=${estado.bateriaExenta} " +
+                    "xiaomi=${estado.esXiaomi} -> ${estado.resumen}"
+            )
+            if (!estado.bateriaExenta) {
+                Log.w(TAG, "El servicio arranca SIN exención de batería: " +
+                    "el sistema puede matarlo en cualquier momento")
+            }
+        }
     }
 
     private fun createNotificationChannel() {

@@ -18,11 +18,62 @@ import java.io.IOException
  *   desajuste a mitad de ronda. Vale `null` mientras el backend siga
  *   publicando el esquema antiguo (se corrige en la Fase 3).
  */
+/**
+ * @param ablation modo del experimento que dicta el servidor: `"full"` aplica
+ *   el filtro de actividad y empareja los impostores por energía;
+ *   `"baseline"` reproduce el comportamiento anterior a la v1.6 (sin filtro,
+ *   impostores al azar). Lo decide el servidor para que las dos corridas que
+ *   se comparan usen literalmente el mismo APK.
+ *
+ *   Por defecto `"full"` si el servidor no lo publica: un backend viejo no
+ *   debe cambiar en silencio el comportamiento de la app.
+ *
+ *   NO entra en [requireCompatibleWith]: no es parte del contrato del modelo
+ *   y un desajuste aquí no invalida la agregación.
+ */
 data class ModelInfo(
     val sensorConfig: String,
     val windowSize: Int,
-    val encoderFlatSize: Int?
-)
+    val encoderFlatSize: Int?,
+    val ablation: String = ABLATION_FULL
+) {
+    /**
+     * Las dos correcciones son INDEPENDIENTES y responden a preguntas
+     * distintas, por eso se controlan por separado:
+     *
+     *  - El FILTRO cambia qué ventanas existen, y por tanto la partición y el
+     *    conjunto de test. Comparar EER con y sin filtro es comparar exámenes
+     *    distintos: no es un A/B, se reporta como par (EER, abstención).
+     *  - El EMPAREJADO sólo cambia de dónde salen las impostoras. Con el
+     *    filtro fijo en las dos condiciones, las genuinas de test son las
+     *    MISMAS y la única variable es esa. Eso sí es un A/B limpio.
+     *
+     * De ahí el tercer modo `matched_off`: filtro sí, emparejado no.
+     */
+    val aplicarFiltro: Boolean get() = ablation != ABLATION_BASELINE
+
+    val emparejarImpostores: Boolean
+        get() = ablation != ABLATION_BASELINE && ablation != ABLATION_MATCHED_OFF
+
+    companion object {
+        const val ABLATION_FULL = "full"
+        const val ABLATION_BASELINE = "baseline"
+        const val ABLATION_MATCHED_OFF = "matched_off"
+
+        /**
+         * Impostores de OTRO PARTICIPANTE REAL, con la misma app y la misma
+         * tuberia de captura (pendiente G). Exige que el dispositivo tenga los
+         * ficheros del par en filesDir; si no, la sesion aborta en vez de caer
+         * en silencio a HMOG.
+         *
+         * Filtro y emparejado siguen activos: contra un par real el emparejado
+         * ya no corrige nada (las energias son comparables por construccion),
+         * pero mantenerlo hace que la unica diferencia frente a `full` sea de
+         * DONDE salen los impostores.
+         */
+        const val ABLATION_PEER = "peer"
+    }
+}
 
 class ModelInfoFetcher(private val client: OkHttpClient = OkHttpClient()) {
 
@@ -46,7 +97,8 @@ class ModelInfoFetcher(private val client: OkHttpClient = OkHttpClient()) {
                     json.getInt("encoder_flat_size")
                 } else {
                     null
-                }
+                },
+                ablation = json.optString("ablation", ModelInfo.ABLATION_FULL)
             )
         }
     }

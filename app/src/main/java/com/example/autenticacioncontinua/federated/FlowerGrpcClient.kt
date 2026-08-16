@@ -78,6 +78,13 @@ class FlowerGrpcClient(
     private var dataset: LocalDataset? = null
     private val manifest = modelManager.manifest
 
+    /** Modo de ablación en curso; lo fija [prepareDataset]. */
+    @Volatile
+    private var emparejarImpostores: Boolean = true
+
+    /** Umbral de actividad autocalibrado, para el diario del dispositivo. */
+    val ultimoUmbralActividad: Float? get() = windowSegmenter.ultimoUmbralActividad
+
     fun connect(host: String, port: Int = 8080) {
         channel = AndroidChannelBuilder
             .forAddress(host, port)
@@ -90,11 +97,19 @@ class FlowerGrpcClient(
     /**
      * Prepara la partición local.
      *
+     * @param aplicarFiltro modo de ablación dictado por el servidor. Con
+     *   `false` se reproduce el comportamiento anterior a la v1.6 —sin filtro
+     *   de actividad y con impostores al azar— para poder medir el efecto de
+     *   las correcciones de dominio sobre la MISMA corrida y el mismo APK.
      * @return el dataset, o `null` si no hay material suficiente para
      *   entrenar y validar.
      */
-    suspend fun prepareDataset(): LocalDataset? {
-        val windows = windowSegmenter.getWindows()
+    suspend fun prepareDataset(
+        aplicarFiltro: Boolean = true,
+        emparejarImpostores: Boolean = true
+    ): LocalDataset? {
+        this.emparejarImpostores = emparejarImpostores
+        val windows = windowSegmenter.getWindows(aplicarFiltroActividad = aplicarFiltro)
         if (windows.size < MIN_WINDOWS_TO_TRAIN) {
             Log.w(TAG, "Sólo ${windows.size} ventanas; se necesitan $MIN_WINDOWS_TO_TRAIN")
             return null
@@ -175,7 +190,15 @@ class FlowerGrpcClient(
         val result = localEvaluator.evaluate(
             globalEncoder = modelManager.getEncoderWeights(),
             evaluationWindows = local.test,
-            genuineTrainWindows = local.train,
+            // Pendiente B2: el umbral se calibra con VALIDACIÓN, no con
+            // `local.train`. Validación cumple las dos condiciones que pide
+            // LocalEvaluator: el modelo no ha entrenado con ella (así que sus
+            // puntuaciones genuinas no están saturadas en ~1.0) y es disjunta
+            // de test (así que el FRR que se reporta no está medido sobre las
+            // mismas ventanas que fijaron el umbral). Éste es el número
+            // reportable de la tesis.
+            calibrationWindows = local.validation,
+            emparejarImpostores = emparejarImpostores,
             // Semilla fija y distinta de las de ronda: la medición final debe
             // ser reproducible al repetirla sobre el mismo dispositivo.
             seed = clientIdentity.splitSeed + TEST_SEED_OFFSET
@@ -319,6 +342,7 @@ class FlowerGrpcClient(
             trainWindows = local.train,
             learningRate = learningRate,
             epochs = epochs,
+            emparejarImpostores = emparejarImpostores,
             // Semilla distinta por ronda: el barajado y el muestreo de
             // impostores deben variar, a diferencia de la partición.
             seed = clientIdentity.splitSeed + round
@@ -339,6 +363,14 @@ class FlowerGrpcClient(
                 .setStatus(okStatus())
                 .setParameters(encodeEncoder(result.encoderWeights))
                 .setNumExamples(result.numExamples.toLong())
+                // Identidad del DISPOSITIVO, para que el servidor pueda
+                // detectar que dos conexiones son el mismo teléfono. Flower
+                // sólo distingue conexiones, así que sin esto una segunda
+                // sesión pesa doble en FedAvg y el log dice `clientes=3` tan
+                // tranquilo (pendiente J). Es un UUID opaco persistido en
+                // preferencias: no identifica a la persona, sólo permite
+                // correlacionar rondas del mismo aparato.
+                .putMetrics("client_id", stringScalar(clientIdentity.clientId))
                 .putMetrics("train_loss", doubleScalar(result.loss.toDouble()))
                 .putMetrics("recon_loss", doubleScalar(result.reconLoss.toDouble()))
                 .putMetrics("cls_loss", doubleScalar(result.clsLoss.toDouble()))
@@ -360,7 +392,26 @@ class FlowerGrpcClient(
         val result = localEvaluator.evaluate(
             globalEncoder = decodeEncoder(evaluateIns.parameters),
             evaluationWindows = local.validation,
-            genuineTrainWindows = local.train,
+            // Aquí no hay un tercer conjunto genuino disponible, así que se
+            // calibra con el mismo que se mide. La regla que NO se rompe es
+            // "nunca calibrar con `train`": eso es lo que saturaba el umbral y
+            // daba FRR=1.0 (pendiente B2). El precio es que el far/frr DE
+            // RONDA sale optimista por construcción y es sólo diagnóstico —
+            // el número reportable es el de `evaluateHeldOutTest()`, donde
+            // calibración (validación) y medición (test) sí son disjuntas.
+            //
+            // Partir validación en mitades daría un far/frr honesto también
+            // aquí, pero dejaría `val_auc` sobre la mitad de las ventanas, y
+            // `val_auc` es lo que usa el servidor para elegir la mejor ronda y
+            // para la parada temprana. Con el ruido que ya tiene (~0.04 con
+            // n=93 por clase) adelgazarlo es peor negocio que un far/frr de
+            // ronda optimista.
+            //
+            // Vale además para que el umbral que persiste `thresholdStore`
+            // quede en un rango usable aunque la sesión federada aborte antes
+            // de la medición final.
+            calibrationWindows = local.validation,
+            emparejarImpostores = emparejarImpostores,
             seed = clientIdentity.splitSeed + round
         )
 
@@ -442,6 +493,19 @@ class FlowerGrpcClient(
 
     private fun doubleScalar(value: Double): Scalar =
         Scalar.newBuilder().setDouble(value).build()
+
+    /**
+     * `Scalar` de texto, para el `client_id` que identifica al DISPOSITIVO.
+     *
+     * El campo `string` es el 14 en el proto del cliente y también en el de
+     * flwr 1.23.0 (verificado sobre `Scalar.DESCRIPTOR`). Merece la pena
+     * dejarlo escrito: el fallo más caro del proyecto fue exactamente un
+     * desajuste de número de campo en este mismo `oneof` —el servidor emitía
+     * `sint64` en el 8 y el cliente lo leía en el 2— y proto3 no da error, se
+     * limita a devolver el valor por defecto.
+     */
+    private fun stringScalar(value: String): Scalar =
+        Scalar.newBuilder().setString(value).build()
 
     private suspend fun recordResourceUsage(
         tag: String,

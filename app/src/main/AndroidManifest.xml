@@ -7,6 +7,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+      Sin esto la app NO PUEDE ni siquiera MOSTRAR el diálogo de exención de
+      batería: hay que buscarlo a mano en Ajustes, y por eso no lo tenía
+      ningún participante. El 2026-08-15 las tres sesiones federadas murieron
+      por dispositivos que el sistema apagó. Ver pendiente E.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
@@ -56,6 +63,22 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!--
+          Para entregar el zip de la base a WhatsApp sin exponer el
+          almacenamiento de la app. Sin esto, pasar un `file://` a otra
+          aplicación lanza FileUriExposedException desde Android 7.
+          Las rutas cedidas están acotadas en res/xml/file_paths.xml.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
