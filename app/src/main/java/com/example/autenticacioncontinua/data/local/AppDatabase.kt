@@ -13,10 +13,23 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.autenticacioncontinua.data.local.dao.DeviceEventDao
 import com.example.autenticacioncontinua.data.local.dao.LabeledSessionDao
+import com.example.autenticacioncontinua.data.local.dao.MedicionLatenciaDao
+import com.example.autenticacioncontinua.data.local.dao.controlada.BloqueDao
+import com.example.autenticacioncontinua.data.local.dao.controlada.ParticipanteDao
+import com.example.autenticacioncontinua.data.local.dao.controlada.SesionControladaDao
+import com.example.autenticacioncontinua.data.local.dao.MedicionRecursosDao
 import com.example.autenticacioncontinua.data.local.dao.ResourceMeasurementDao
 import com.example.autenticacioncontinua.data.local.dao.TrainingRunDao
 import com.example.autenticacioncontinua.data.local.entity.DeviceEventEntity
 import com.example.autenticacioncontinua.data.local.entity.LabeledSessionEntity
+import com.example.autenticacioncontinua.data.local.entity.MedicionLatenciaEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.BloqueEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.CovariableSesionEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.EventoTecleoEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.MuestraInercialEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.ParticipanteEntity
+import com.example.autenticacioncontinua.data.local.entity.controlada.SesionControladaEntity
+import com.example.autenticacioncontinua.data.local.entity.MedicionRecursosEntity
 import com.example.autenticacioncontinua.data.local.entity.ResourceMeasurementEntity
 import com.example.autenticacioncontinua.data.local.entity.TrainingRunEntity
 
@@ -28,10 +41,24 @@ import com.example.autenticacioncontinua.data.local.entity.TrainingRunEntity
         ResourceMeasurementEntity::class,
         TrainingRunEntity::class,
         DeviceEventEntity::class,
-        LabeledSessionEntity::class
+        LabeledSessionEntity::class,
+        MedicionRecursosEntity::class,
+        MedicionLatenciaEntity::class,
+        // Corpus controlado. Va en las MISMAS tablas de esta base pero en
+        // tablas propias: la separacion de corpus que exige el diseno es de
+        // TABLA, no de fichero, y ninguna consulta del analisis mezcla
+        // `muestras_inerciales` con `accelerometer_data`.
+        ParticipanteEntity::class,
+        SesionControladaEntity::class,
+        BloqueEntity::class,
+        MuestraInercialEntity::class,
+        EventoTecleoEntity::class,
+        CovariableSesionEntity::class
     ],
-    version = 7,
-    exportSchema = false
+    version = 10,
+    // Se exporta a `app/schemas`. Es lo que permite contrastar el SQL de las
+    // migraciones con el esquema real sin un telefono delante.
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun gyroscopeDao(): GyroscopeDao
@@ -41,6 +68,11 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun trainingRunDao(): TrainingRunDao
     abstract fun deviceEventDao(): DeviceEventDao
     abstract fun labeledSessionDao(): LabeledSessionDao
+    abstract fun medicionRecursosDao(): MedicionRecursosDao
+    abstract fun medicionLatenciaDao(): MedicionLatenciaDao
+    abstract fun participanteDao(): ParticipanteDao
+    abstract fun sesionControladaDao(): SesionControladaDao
+    abstract fun bloqueDao(): BloqueDao
 
     companion object {
         val MIGRATION_3_4 = object : Migration(3, 4) {
@@ -153,6 +185,302 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_labeled_sessions_startMs` " +
                             "ON `labeled_sessions` (`startMs`)"
                 )
+            }
+        }
+
+        /**
+         * El SQL de la 7->8, como DATOS y no enterrado en el cuerpo de la
+         * migracion.
+         *
+         * Asi una prueba de la JVM puede contrastarlo, sentencia a sentencia,
+         * con el esquema que Room exporta a `app/schemas`. Una discrepancia
+         * —un tipo, un NOT NULL, el nombre de un indice— no falla al compilar:
+         * falla al ARRANCAR la app, en el telefono del participante, sobre los
+         * unicos datos de campo que existen.
+         */
+        internal val SQL_7_8: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `mediciones_recursos` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`etiqueta` TEXT NOT NULL, " +
+                            "`tipoOperacion` TEXT NOT NULL, " +
+                            "`configSensores` TEXT NOT NULL, " +
+                            "`regimenAprendizaje` TEXT NOT NULL, " +
+                            "`duracionMs` INTEGER NOT NULL, " +
+                            "`nMuestras` INTEGER NOT NULL, " +
+                            "`consumoMicroAh` INTEGER, " +
+                            "`consumoMicroAhPorHora` REAL, " +
+                            "`corrienteMediaMicroA` REAL, " +
+                            "`pssMinKb` INTEGER NOT NULL, " +
+                            "`pssMaxKb` INTEGER NOT NULL, " +
+                            "`pssMedioKb` REAL NOT NULL, " +
+                            "`invalidez` TEXT NOT NULL, " +
+                            "`tMs` INTEGER NOT NULL)",
+
+            "CREATE INDEX IF NOT EXISTS `index_mediciones_recursos_tMs` " +
+                            "ON `mediciones_recursos` (`tMs`)",
+
+            "CREATE INDEX IF NOT EXISTS " +
+                            "`index_mediciones_recursos_configSensores` " +
+                            "ON `mediciones_recursos` (`configSensores`)",
+
+            "CREATE TABLE IF NOT EXISTS `mediciones_latencia` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`etiqueta` TEXT NOT NULL, " +
+                            "`configSensores` TEXT NOT NULL, " +
+                            "`regimenAprendizaje` TEXT NOT NULL, " +
+                            "`n` INTEGER NOT NULL, " +
+                            "`mediaMs` REAL NOT NULL, " +
+                            "`medianaMs` REAL NOT NULL, " +
+                            "`p95Ms` REAL NOT NULL, " +
+                            "`minMs` REAL NOT NULL, " +
+                            "`maxMs` REAL NOT NULL, " +
+                            "`tMs` INTEGER NOT NULL)",
+
+            "CREATE INDEX IF NOT EXISTS `index_mediciones_latencia_tMs` " +
+                            "ON `mediciones_latencia` (`tMs`)",
+
+            "CREATE INDEX IF NOT EXISTS " +
+                            "`index_mediciones_latencia_configSensores` " +
+                            "ON `mediciones_latencia` (`configSensores`)"
+        )
+
+        /**
+         * Columnas nuevas en `mediciones_recursos`, por lo que midio el Redmi.
+         *
+         * POR QUE HAY UNA 9->10 EN VEZ DE HABER CORREGIDO LA 8->9. Porque la
+         * 8->9 ya se aplico en el terminal del estudio el 24/08 y las
+         * migraciones no se reescriben: una base que ya avanzo no puede
+         * "des-avanzar", y un terminal migrado con la version vieja y otro con
+         * la nueva darian esquemas distintos con el mismo numero de version.
+         *
+         * ALTER TABLE ADD COLUMN es barato AQUI y no en general: `ALTER` en
+         * SQLite reescribe la tabla entera, pero `ADD COLUMN` no —solo toca la
+         * cabecera— y ademas esta tabla tiene cero filas en todos los
+         * terminales, porque se creo hace unos minutos. Sobre
+         * `accelerometer_data` esto seguiria estando prohibido.
+         *
+         * QUE ANADEN. El 24/08 se midio que el contador de carga del Redmi
+         * 23129RA5FL se mueve en escalones de 49 370 uAh (el 1% de su bateria):
+         * no resuelve un bloque de minutos. La corriente instantanea si, asi
+         * que ahora cada medicion lleva TAMBIEN el consumo integrado, el METODO
+         * con el que se obtuvo la cifra reportable —dos bloques medidos con
+         * instrumentos distintos no son comparables— y un booleano `valida`,
+         * porque la regla de validez dejo de ser "sin motivos de invalidez":
+         * que el contador no resuelva se anota, pero no invalida.
+         *
+         * Los valores por defecto son los de una fila que no midio nada. No
+         * hay filas que rellenar, pero SQLite exige un DEFAULT para anadir una
+         * columna NOT NULL.
+         */
+        internal val SQL_9_10: List<String> = listOf(
+            "ALTER TABLE `mediciones_recursos` ADD COLUMN `consumoIntegradoMicroAh` REAL",
+
+            "ALTER TABLE `mediciones_recursos` " +
+                "ADD COLUMN `consumoIntegradoMicroAhPorHora` REAL",
+
+            "ALTER TABLE `mediciones_recursos` " +
+                "ADD COLUMN `metodoConsumo` TEXT NOT NULL DEFAULT 'NINGUNO'",
+
+            "ALTER TABLE `mediciones_recursos` " +
+                "ADD COLUMN `tasaConsumoMicroAhPorHora` REAL",
+
+            "ALTER TABLE `mediciones_recursos` " +
+                "ADD COLUMN `valida` INTEGER NOT NULL DEFAULT 0"
+        )
+
+        /** Ver la nota de [SQL_7_8]. */
+        internal val SQL_8_9: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `participantes` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`seudonimo` TEXT NOT NULL, " +
+                            "`fechaAltaMs` INTEGER NOT NULL, " +
+                            "`tramoEdad` TEXT NOT NULL, " +
+                            "`sexo` TEXT NOT NULL, " +
+                            "`lateralidad` TEXT NOT NULL, " +
+                            "`competenciaLatin` TEXT NOT NULL, " +
+                            "`notas` TEXT NOT NULL)",
+
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                            "`index_participantes_seudonimo` ON `participantes` (`seudonimo`)",
+
+            "CREATE TABLE IF NOT EXISTS `sesiones_controladas` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`participanteId` INTEGER NOT NULL, " +
+                            "`dispositivoId` TEXT NOT NULL, " +
+                            "`inicioMs` INTEGER NOT NULL, " +
+                            "`finMs` INTEGER NOT NULL, " +
+                            "`ordenDispositivo` INTEGER NOT NULL, " +
+                            "`semillaSeleccion` INTEGER NOT NULL, " +
+                            "`versionApp` TEXT NOT NULL, " +
+                            "`versionProtocolo` TEXT NOT NULL, " +
+                            "`bateriaInicio` REAL, " +
+                            "`bateriaFin` REAL, " +
+                            "`estado` TEXT NOT NULL, " +
+                            "`motivoInvalidacion` TEXT NOT NULL, " +
+                            "FOREIGN KEY(`participanteId`) REFERENCES `participantes`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+
+            "CREATE INDEX IF NOT EXISTS " +
+                            "`index_sesiones_controladas_participanteId` " +
+                            "ON `sesiones_controladas` (`participanteId`)",
+
+            "CREATE INDEX IF NOT EXISTS `index_sesiones_controladas_inicioMs` " +
+                            "ON `sesiones_controladas` (`inicioMs`)",
+
+            "CREATE TABLE IF NOT EXISTS `bloques` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`sesionId` INTEGER NOT NULL, " +
+                            "`indice` INTEGER NOT NULL, " +
+                            "`inicioMs` INTEGER NOT NULL, " +
+                            "`finMs` INTEGER NOT NULL, " +
+                            "`idioma` TEXT NOT NULL, " +
+                            "`parrafosUsados` TEXT NOT NULL, " +
+                            "`pulsaciones` INTEGER NOT NULL, " +
+                            "`errores` INTEGER NOT NULL, " +
+                            "`borrados` INTEGER NOT NULL, " +
+                            "`ppm` REAL NOT NULL, " +
+                            "`precision` REAL NOT NULL, " +
+                            "`interrumpido` INTEGER NOT NULL, " +
+                            "`motivoInterrupcion` TEXT NOT NULL, " +
+                            "FOREIGN KEY(`sesionId`) REFERENCES `sesiones_controladas`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+
+            "CREATE INDEX IF NOT EXISTS `index_bloques_sesionId` " +
+                            "ON `bloques` (`sesionId`)",
+
+            "CREATE TABLE IF NOT EXISTS `muestras_inerciales` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`bloqueId` INTEGER NOT NULL, " +
+                            "`tParedMs` INTEGER NOT NULL, " +
+                            "`tMonotonoNs` INTEGER NOT NULL, " +
+                            "`accX` REAL NOT NULL, " +
+                            "`accY` REAL NOT NULL, " +
+                            "`accZ` REAL NOT NULL, " +
+                            "`gyrX` REAL NOT NULL, " +
+                            "`gyrY` REAL NOT NULL, " +
+                            "`gyrZ` REAL NOT NULL, " +
+                            "`magX` REAL, " +
+                            "`magY` REAL, " +
+                            "`magZ` REAL, " +
+                            "FOREIGN KEY(`bloqueId`) REFERENCES `bloques`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+
+            "CREATE INDEX IF NOT EXISTS " +
+                            "`index_muestras_inerciales_bloqueId_tMonotonoNs` " +
+                            "ON `muestras_inerciales` (`bloqueId`, `tMonotonoNs`)",
+
+            "CREATE TABLE IF NOT EXISTS `eventos_tecleo` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`bloqueId` INTEGER NOT NULL, " +
+                            "`parrafoId` TEXT NOT NULL, " +
+                            "`posicion` INTEGER NOT NULL, " +
+                            "`esperado` TEXT NOT NULL, " +
+                            "`recibido` TEXT NOT NULL, " +
+                            "`acierto` INTEGER NOT NULL, " +
+                            "`borrado` INTEGER NOT NULL, " +
+                            "`tDownMs` INTEGER NOT NULL, " +
+                            "`tUpMs` INTEGER NOT NULL, " +
+                            "`x` REAL, " +
+                            "`y` REAL, " +
+                            "`presion` REAL, " +
+                            "`area` REAL, " +
+                            "FOREIGN KEY(`bloqueId`) REFERENCES `bloques`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+
+            "CREATE INDEX IF NOT EXISTS `index_eventos_tecleo_bloqueId_tDownMs` " +
+                            "ON `eventos_tecleo` (`bloqueId`, `tDownMs`)",
+
+            "CREATE TABLE IF NOT EXISTS `covariables_sesion` (" +
+                            "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "`sesionId` INTEGER NOT NULL, " +
+                            "`tMs` INTEGER NOT NULL, " +
+                            "`luz` REAL, " +
+                            "`proximidad` REAL, " +
+                            "`tempBateria` REAL, " +
+                            "`bateria` REAL, " +
+                            "FOREIGN KEY(`sesionId`) REFERENCES `sesiones_controladas`(`id`) " +
+                            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+
+            "CREATE INDEX IF NOT EXISTS `index_covariables_sesion_sesionId_tMs` " +
+                            "ON `covariables_sesion` (`sesionId`, `tMs`)"
+        )
+
+        /**
+         * Medicion de recursos con instrumentos que si resuelven.
+         *
+         * POR QUE DOS TABLAS NUEVAS Y NO TOCAR `resource_measurements`. Esa
+         * tabla guarda `batteryDeltaPercent`, un delta de porcentaje entero:
+         * en las bases de campo del 17/08 valio exactamente 0.0 en 669 de sus
+         * 676 filas, porque el 1% de una bateria de 5 000 mAh son 50 000 uAh y
+         * una inferencia no gasta eso. Sus filas se conservan como registro de
+         * lo que se hizo, pero no se mezclan con las nuevas: en la misma tabla
+         * invitarian a promediarse juntas.
+         *
+         * Aqui tampoco se toca ninguna tabla existente. Solo CREATE TABLE y
+         * CREATE INDEX, que en SQLite no reescriben nada de lo que ya hay: el
+         * arranque de la app en el telefono del participante no puede quedarse
+         * reescribiendo `accelerometer_data`.
+         *
+         * Los tres campos de energia son NULLable a proposito. Un terminal que
+         * no expone BATTERY_PROPERTY_CHARGE_COUNTER, o un bloque demasiado
+         * corto para la resolucion del contador, tienen que dar NULL y no cero
+         * — distinguir "no se pudo medir" de "consumio cero" es justo lo que
+         * fallaba antes. Los nombres de indice siguen el convenio de Room
+         * (`index_<tabla>_<columna>`): si no coinciden EXACTAMENTE con los
+         * declarados en la entidad, Room aborta el arranque al validar.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_7_8.forEach(db::execSQL)
+            }
+        }
+
+        /**
+         * Corpus del estudio controlado: participantes, sesiones, bloques,
+         * muestras inerciales, eventos de tecleo y covariables.
+         *
+         * SEIS TABLAS NUEVAS Y CERO CAMBIOS EN LAS VIEJAS. La recoleccion
+         * ambiental por rafagas sigue funcionando exactamente igual: no se
+         * anade ni una columna a `accelerometer_data`, `gyroscope_data` ni
+         * `labeled_sessions`. Es la restriccion que fijo el usuario el 23/08 y
+         * ademas la unica forma de que el arranque de la app no se quede
+         * reescribiendo dos tablas de un millon de filas.
+         *
+         * POR QUE ESTAN EN LA MISMA BASE Y NO EN OTRA. La separacion de corpus
+         * que exige el diseno es de TABLA, no de fichero: ninguna consulta
+         * mezcla `muestras_inerciales` con `accelerometer_data`, y ninguna
+         * tuberia de analisis lee de las dos a la vez. Una segunda base
+         * obligaria a un segundo `RoomDatabase`, un segundo juego de
+         * migraciones y una exportacion doble, sin ganar ninguna garantia que
+         * no de ya el separar las tablas.
+         *
+         * CLAVES AJENAS CON BORRADO EN CASCADA. Borrar un participante tiene
+         * que llevarse sus sesiones, bloques, muestras y eventos: si no,
+         * quedarian veintitantos millones de filas huerfanas que ninguna
+         * consulta encontraria y que seguirian ocupando el disco del telefono.
+         * Room activa `PRAGMA foreign_keys` por su cuenta, asi que la cascada
+         * la aplica SQLite y no codigo nuestro.
+         *
+         * EL UNICO INDICE UNICO ES EL DEL SEUDONIMO. Dos altas del mismo
+         * participante lo partirian en dos personas distintas, y en un analisis
+         * con particion disjunta por persona eso es fuga de identidad entre
+         * entrenamiento y prueba: la misma persona a los dos lados.
+         *
+         * Los nombres de indice siguen el convenio de Room
+         * (`index_<tabla>_<columnas>`) y las clausulas de clave ajena llevan
+         * `ON UPDATE NO ACTION ON DELETE CASCADE` porque es lo que Room genera;
+         * cualquier diferencia y aborta el arranque al validar el esquema.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_8_9.forEach(db::execSQL)
+            }
+        }
+
+        /** Ver la nota de [SQL_9_10]. */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_9_10.forEach(db::execSQL)
             }
         }
     }

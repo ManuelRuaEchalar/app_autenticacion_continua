@@ -1,7 +1,6 @@
 package com.example.autenticacioncontinua.monitoring
 
-import android.app.ActivityManager
-import android.content.Context
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,56 +22,62 @@ data class RamMeasurement(
     val timestampMs: Long
 )
 
-class RamMonitorImpl(private val context: Context) : IRamMonitor {
+/**
+ * Memoria del PROCESO, no del dispositivo.
+ *
+ * QUÉ SE CORRIGIÓ (23/08). La versión anterior devolvía
+ * `ActivityManager.MemoryInfo.totalMem - availMem`, es decir la memoria en uso
+ * de TODO el dispositivo: el sistema, el lanzador y cualquier otra aplicación
+ * abierta. Sobre las bases de campo del 17/08 daba entre 2 868 y 4 435 MB, que
+ * no es el consumo de esta app —cuyo orden real son un par de cientos de MB— y
+ * que además fluctúa por causas ajenas al experimento. Cualquier comparación
+ * entre configuraciones de sensores hecha con ese número medía el ruido del
+ * resto del teléfono.
+ *
+ * Ahora delega en [FuenteMemoria], que lee el PSS del proceso con
+ * `Debug.MemoryInfo`, que es lo que pide el perfil aprobado.
+ *
+ * SIGUE MIDIENDO POR OPERACIÓN porque `FlowerGrpcClient` lo usa así y la
+ * memoria SÍ se puede medir en ventanas cortas —a diferencia de la batería—.
+ * Para bloques sostenidos existe [MonitorBloque], que además da mínimo y media
+ * y no sólo el pico.
+ */
+class RamMonitorImpl(
+    private val fuente: FuenteMemoria = FuenteMemoriaAndroid(),
+    private val periodoMuestreoMs: Long = 500L,
+    private val alcance: CoroutineScope = CoroutineScope(Dispatchers.Default)
+) : IRamMonitor {
 
-    private val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private class Estado(val inicioMb: Float, var picoMb: Float, var job: Job? = null)
 
-    private val measurements = mutableMapOf<String, MeasurementState>()
+    private val mediciones = mutableMapOf<String, Estado>()
 
-    private class MeasurementState(
-        val startUsedMb: Float,
-        var peakUsedMb: Float,
-        var job: Job? = null
-    )
-
-    override fun getUsedRamMb(): Float {
-        val memInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memInfo)
-        return (memInfo.totalMem - memInfo.availMem) / (1024f * 1024f)
-    }
+    override fun getUsedRamMb(): Float = fuente.pssProcesoKb() / 1024f
 
     override fun startMeasurement(tag: String) {
-        val startMem = getUsedRamMb()
-        val state = MeasurementState(startUsedMb = startMem, peakUsedMb = startMem)
-        
-        state.job = scope.launch {
+        mediciones.remove(tag)?.job?.cancel()
+        val inicio = getUsedRamMb()
+        val estado = Estado(inicioMb = inicio, picoMb = inicio)
+        estado.job = alcance.launch {
             while (isActive) {
-                delay(500)
-                val current = getUsedRamMb()
-                if (current > state.peakUsedMb) {
-                    state.peakUsedMb = current
-                }
+                delay(periodoMuestreoMs)
+                val actual = getUsedRamMb()
+                if (actual > estado.picoMb) estado.picoMb = actual
             }
         }
-        
-        measurements[tag] = state
+        mediciones[tag] = estado
     }
 
     override fun stopMeasurement(tag: String): RamMeasurement {
-        val state = measurements.remove(tag)
-        state?.job?.cancel()
-
-        val endUsedMb = getUsedRamMb()
-        val startUsedMb = state?.startUsedMb ?: endUsedMb
-        val peakUsedMb = maxOf(state?.peakUsedMb ?: endUsedMb, endUsedMb)
-
+        val estado = mediciones.remove(tag)
+        estado?.job?.cancel()
+        val finMb = getUsedRamMb()
         return RamMeasurement(
             tag = tag,
-            startUsedMb = startUsedMb,
-            peakUsedMb = peakUsedMb,
-            endUsedMb = endUsedMb,
-            timestampMs = System.currentTimeMillis()
+            startUsedMb = estado?.inicioMb ?: finMb,
+            peakUsedMb = maxOf(estado?.picoMb ?: finMb, finMb),
+            endUsedMb = finMb,
+            timestampMs = SystemClock.elapsedRealtime()
         )
     }
 }

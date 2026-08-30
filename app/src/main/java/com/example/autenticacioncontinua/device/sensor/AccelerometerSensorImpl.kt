@@ -1,62 +1,56 @@
 package com.example.autenticacioncontinua.device.sensor
 
 import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import com.example.autenticacioncontinua.domain.model.AccelerometerData
 import com.example.autenticacioncontinua.domain.sensor.IAccelerometerSensor
-import kotlinx.coroutines.channels.BufferOverflow
+import com.example.autenticacioncontinua.domain.sensor.TipoSensor
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.map
 
 /**
- * Reads TYPE_ACCELEROMETER at 50 Hz (20 000 µs period).
- * Matches UCI-HAR / HMOG reference sampling rate.
+ * Acelerómetro para la RECOGIDA AMBIENTAL, a 50 Hz.
+ *
+ * AHORA ES UN ADAPTADOR, no una implementación. Toda la mecánica —registro,
+ * flujo, parada, alineación de relojes— vive en [FuenteSensorAndroid]; aquí
+ * sólo queda traducir [com.example.autenticacioncontinua.domain.sensor.MuestraSensor]
+ * al `AccelerometerData` que ya consumen `SessionManagerImpl` y el repositorio.
+ *
+ * POR QUÉ SE CONSERVA LA INTERFAZ VIEJA en vez de migrar a sus consumidores.
+ * Porque la recogida por ráfagas lleva funcionando desde el 12/08 y tiene
+ * dentro 1,3 millones de filas del trabajo de campo; la restricción que fijó el
+ * usuario el 23/08 es no tocar su lógica. Un adaptador de diez líneas cumple
+ * las dos cosas: quita la duplicación y no cambia nada de lo que ya funciona.
+ *
+ * SIGUE A 50 Hz, no a los 100 Hz del estudio controlado. La tasa de la recogida
+ * ambiental es parte de los datos ya recogidos: subirla ahora partiría el
+ * corpus en dos regímenes de muestreo distintos y haría incomparables las
+ * ráfagas de agosto con las de octubre.
+ *
+ * `timestamp` SIGUE SIENDO EL DE PARED, como antes. Es el que ya está en las
+ * 1,3 millones de filas de `accelerometer_data` y el que espera
+ * `WindowSegmenter` para cortar sesiones por hueco de 30 s. El reloj monótono
+ * está disponible en la fuente genérica y lo usa el corpus controlado, que sí
+ * lo necesita.
  */
 class AccelerometerSensorImpl(
-    context: Context
-) : IAccelerometerSensor, SensorEventListener {
+    context: Context,
+    private val fuente: FuenteSensorAndroid = FuenteSensorAndroid(
+        context = context,
+        tipo = TipoSensor.ACELEROMETRO,
+        hzSolicitados = HZ_AMBIENTAL
+    )
+) : IAccelerometerSensor {
+
+    override fun startListening() = fuente.iniciar()
+
+    override fun stopListening() = fuente.detener()
+
+    override fun getSensorDataFlow(): Flow<AccelerometerData> = fuente.flujo().map {
+        AccelerometerData(x = it.x, y = it.y, z = it.z, timestamp = it.tParedMs)
+    }
 
     companion object {
-        private const val SAMPLING_PERIOD_US = 20_000 // 50 Hz
+        /** 50 Hz: la tasa de UCI-HAR y HMOG, y la de todo lo ya recogido. */
+        const val HZ_AMBIENTAL = 50
     }
-
-    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-
-    private val _sensorDataFlow = MutableSharedFlow<AccelerometerData>(
-        extraBufferCapacity = 100,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-
-    override fun startListening() {
-        accelerometer?.let {
-            sensorManager.registerListener(this, it, SAMPLING_PERIOD_US)
-        }
-    }
-
-    override fun stopListening() {
-        sensorManager.unregisterListener(this)
-    }
-
-    override fun getSensorDataFlow(): Flow<AccelerometerData> = _sensorDataFlow.asSharedFlow()
-
-    override fun onSensorChanged(event: SensorEvent?) {
-        event?.let {
-            if (it.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-                val data = AccelerometerData(
-                    x = it.values[0],
-                    y = it.values[1],
-                    z = it.values[2],
-                    timestamp = System.currentTimeMillis()
-                )
-                _sensorDataFlow.tryEmit(data)
-            }
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { /* no-op */ }
 }

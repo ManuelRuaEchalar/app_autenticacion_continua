@@ -20,6 +20,14 @@ import com.example.autenticacioncontinua.ml.model.ThresholdStore
 import com.example.autenticacioncontinua.ml.training.LocalEvaluator
 import com.example.autenticacioncontinua.ml.training.LocalTrainer
 import com.example.autenticacioncontinua.monitoring.BatteryMonitorImpl
+import com.example.autenticacioncontinua.monitoring.Cronometro
+import com.example.autenticacioncontinua.monitoring.FuenteEnergia
+import com.example.autenticacioncontinua.monitoring.FuenteEnergiaAndroid
+import com.example.autenticacioncontinua.monitoring.FuenteMemoria
+import com.example.autenticacioncontinua.monitoring.FuenteMemoriaAndroid
+import com.example.autenticacioncontinua.monitoring.MedidorDeOperacion
+import com.example.autenticacioncontinua.monitoring.MonitorBloque
+import com.example.autenticacioncontinua.monitoring.ProtocoloDeBloques
 import com.example.autenticacioncontinua.monitoring.IBatteryMonitor
 import com.example.autenticacioncontinua.monitoring.IRamMonitor
 import com.example.autenticacioncontinua.monitoring.RamMonitorImpl
@@ -109,7 +117,8 @@ val mlModule = module {
         LocalTrainer(
             modelManager = get(),
             backgroundPool = get(named(BACKGROUND_TRAIN)),
-            headStore = get()
+            headStore = get(),
+            cronometro = get()
         )
     }
 
@@ -129,12 +138,44 @@ val mlModule = module {
             modelManager = get(),
             windowSegmenter = get(),
             headStore = get(),
-            thresholdStore = get()
+            thresholdStore = get(),
+            cronometro = get()
         )
     }
 
-    single<IBatteryMonitor> { BatteryMonitorImpl(androidContext()) }
-    single<IRamMonitor> { RamMonitorImpl(androidContext()) }
+    // Las fuentes son envoltorios finos sobre la API de Android; los monitores
+    // y el MonitorBloque dependen de la INTERFAZ, no del contexto, de modo que
+    // su logica se prueba con dobles y sin dispositivo.
+    single<FuenteEnergia> { FuenteEnergiaAndroid(androidContext()) }
+    single<FuenteMemoria> { FuenteMemoriaAndroid() }
+
+    single<IBatteryMonitor> { BatteryMonitorImpl(get()) }
+    single<IRamMonitor> { RamMonitorImpl(get()) }
+
+    // Medicion sobre bloques sostenidos: es la unica forma de medir bateria,
+    // porque el contador de carga no resuelve operaciones de pocos segundos.
+    single { MonitorBloque(energia = get(), memoria = get()) }
+
+    // Latencias: inferencia, entrenamiento local, ronda federada, extremo a
+    // extremo. Compartido para que todas las series caigan en el mismo sitio.
+    single { Cronometro() }
+
+    // Une bloque + latencia + persistencia detras de una sola llamada. La
+    // configuracion de sensores sale del manifiesto y no de una constante: es
+    // una variable independiente del diseno y tiene que viajar con cada fila.
+    single {
+        MedidorDeOperacion(
+            monitor = get(),
+            cronometro = get(),
+            registro = get(),
+            configSensores = get<ModelManifest>().sensorConfig
+        )
+    }
+
+    // Ejecutor del protocolo: bloques largos, linea base por repeticion y
+    // orden contrabalanceado. `factory` y no `single` porque cada campana de
+    // medicion es independiente y no debe heredar estado de la anterior.
+    factory { ProtocoloDeBloques(medidor = get(), energia = get()) }
 
     single<IResourceMeasurementRepository> { ResourceMeasurementRepositoryImpl(get<AppDatabase>()) }
 }

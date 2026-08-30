@@ -1,10 +1,13 @@
 package com.example.autenticacioncontinua.ml.training
 
+import android.os.SystemClock
 import android.util.Log
 import com.example.autenticacioncontinua.domain.ml.SensorWindow
 import com.example.autenticacioncontinua.ml.data.BackgroundPool
 import com.example.autenticacioncontinua.ml.data.WindowEnergy
 import com.example.autenticacioncontinua.ml.model.HeadStore
+import com.example.autenticacioncontinua.monitoring.Cronometro
+import com.example.autenticacioncontinua.monitoring.MedidorDeOperacion
 import com.example.autenticacioncontinua.ml.model.TFLiteModelManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -51,7 +54,9 @@ data class TrainingResult(
 class LocalTrainer(
     private val modelManager: TFLiteModelManager,
     private val backgroundPool: BackgroundPool,
-    private val headStore: HeadStore
+    private val headStore: HeadStore,
+    /** Ver la nota de `ContinuousAuthenticator`: por defecto, uno propio. */
+    private val cronometro: Cronometro = Cronometro()
 ) {
     private val manifest = modelManager.manifest
 
@@ -94,6 +99,7 @@ class LocalTrainer(
         val genuinePerBatch = manifest.trainGenuinePerBatch
         val backgroundPerBatch = manifest.trainBackgroundPerBatch
 
+        val nanosInicio = SystemClock.elapsedRealtimeNanos()
         modelManager.setEncoderWeights(globalEncoder)
         headStore.load()?.let { modelManager.setHeadWeights(it) }
         if (manifest.resetOptimizerEachRound) modelManager.resetOptimizer()
@@ -178,6 +184,14 @@ class LocalTrainer(
         }
 
         headStore.save(modelManager.getHeadWeights())
+        // Cubre la carga de pesos, todas las épocas y el guardado de la
+        // cabeza: es el coste de una ronda local completa visto desde quien
+        // la pide. No se registra si `fit` lanza, porque una ronda que falló
+        // no es una latencia de entrenamiento sino un error.
+        cronometro.registrarNanos(
+            MedidorDeOperacion.ENTRENAMIENTO_LOCAL,
+            SystemClock.elapsedRealtimeNanos() - nanosInicio
+        )
 
         TrainingResult(
             encoderWeights = modelManager.getEncoderWeights(),

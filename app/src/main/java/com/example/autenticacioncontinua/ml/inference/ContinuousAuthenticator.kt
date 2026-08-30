@@ -6,6 +6,8 @@ import com.example.autenticacioncontinua.domain.ml.SensorWindow
 import com.example.autenticacioncontinua.ml.model.HeadStore
 import com.example.autenticacioncontinua.ml.model.TFLiteModelManager
 import com.example.autenticacioncontinua.ml.model.ThresholdStore
+import com.example.autenticacioncontinua.monitoring.Cronometro
+import com.example.autenticacioncontinua.monitoring.MedidorDeOperacion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,7 +45,15 @@ class ContinuousAuthenticator(
     private val modelManager: TFLiteModelManager,
     private val windowSegmenter: IWindowSegmenter,
     private val headStore: HeadStore,
-    private val thresholdStore: ThresholdStore
+    private val thresholdStore: ThresholdStore,
+    /**
+     * Cronómetro compartido donde se acumulan las latencias.
+     *
+     * Lleva valor por defecto para que construirlo en una prueba no obligue
+     * a inyectar nada; en la app Koin pasa el compartido, que es el que se
+     * vuelca a la base al cerrar la sesión.
+     */
+    private val cronometro: Cronometro = Cronometro()
 ) {
 
     /**
@@ -74,7 +84,11 @@ class ContinuousAuthenticator(
         var scoreSum = 0f
         var reconSum = 0f
         for (window in windows) {
-            val result = modelManager.score(window.values, threshold)
+            // Por ventana, no por lote: la latencia que importa al usuario
+            // es la de una decisión, y promediar el lote la escondería.
+            val result = cronometro.medir(MedidorDeOperacion.INFERENCIA_VENTANA) {
+                modelManager.score(window.values, threshold)
+            }
             scoreSum += result.genuineScore
             reconSum += result.reconstructionError
         }

@@ -6,29 +6,78 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// Set of Material typography styles to start with
+/**
+ * Familia tipográfica de la aplicación.
+ *
+ * **PENDIENTE ANTES DEL CAMPO: empaquetar Inter.** Ahora mismo se usa la
+ * sans-serif del sistema, y eso es un problema del experimento, no de estética:
+ * los fabricantes sustituyen la fuente del sistema —MIUI trae la suya—, de modo
+ * que con dos terminales de fabricantes distintos **el texto del teleprompter
+ * tendría métricas distintas en cada uno**. Cambiaría dónde caen los saltos de
+ * línea y cuánto texto ve el participante de un vistazo, y eso es parte de la
+ * tarea que el diseño quiere mantener idéntica entre dispositivos.
+ *
+ * El arreglo es un fichero: dejar `Inter.ttf` en `res/font` y sustituir esta
+ * constante por `FontFamily(Font(R.font.inter))`. Todo lo demás ya está
+ * centralizado aquí.
+ */
+val FamiliaApp = FontFamily.SansSerif
+
+/**
+ * Pocos estilos y pocos pesos. Sólo tres pesos —normal, medio, semi— porque una
+ * herramienta de trabajo no necesita más y cada peso extra es otro fichero que
+ * empaquetar.
+ */
 val Typography = Typography(
-    bodyLarge = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 24.sp,
-        letterSpacing = 0.5.sp
-    )
-    /* Other default text styles to override
     titleLarge = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Normal,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-        letterSpacing = 0.sp
+        fontFamily = FamiliaApp,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = Tipos.titulo,
+        lineHeight = 32.sp
     ),
-    labelSmall = TextStyle(
-        fontFamily = FontFamily.Default,
+    titleMedium = TextStyle(
+        fontFamily = FamiliaApp,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.5.sp
+        fontSize = Tipos.subtitulo,
+        lineHeight = 26.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FamiliaApp,
+        fontWeight = FontWeight.Normal,
+        fontSize = Tipos.cuerpo,
+        lineHeight = 22.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = FamiliaApp,
+        fontWeight = FontWeight.Normal,
+        fontSize = Tipos.menor,
+        lineHeight = 18.sp
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FamiliaApp,
+        fontWeight = FontWeight.Medium,
+        fontSize = Tipos.cuerpo,
+        lineHeight = 20.sp
     )
-    */
+)
+
+/**
+ * Estilo del texto que se transcribe.
+ *
+ * Más grande que el cuerpo y con interlineado holgado: el participante lo lee
+ * de reojo mientras teclea, no con la atención puesta en la pantalla.
+ */
+val EstiloTeleprompter = TextStyle(
+    fontFamily = FamiliaApp,
+    fontWeight = FontWeight.Normal,
+    fontSize = Tipos.texto,
+    lineHeight = 34.sp
+)
+
+/** Cifras de la barra de estado del minijuego: tiempo, precisión, ppm. */
+val EstiloCifra = TextStyle(
+    fontFamily = FamiliaApp,
+    fontWeight = FontWeight.Medium,
+    fontSize = Tipos.cifra,
+    lineHeight = 34.sp
 )

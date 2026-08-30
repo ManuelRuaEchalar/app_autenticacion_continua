@@ -16,3 +16,6 @@ local.properties
 
 # Registros del compilador de Kotlin: ruido de una compilacion concreta.
 .kotlin/
+
+# Volcado de fallo de la JVM: ruido de una ejecucion concreta.
+hs_err_pid*.log

@@ -25,7 +25,8 @@ val federatedModule = module {
             clientIdentity = get(),
             batteryMonitor = get(),
             ramMonitor = get(),
-            metricsRepository = get()
+            metricsRepository = get(),
+            medidor = get()
         )
     }
 }

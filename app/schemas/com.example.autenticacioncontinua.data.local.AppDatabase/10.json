@@ -1,0 +1,1278 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 10,
+    "identityHash": "232a166e5910421cf8a8b9122761288c",
+    "entities": [
+      {
+        "tableName": "gyroscope_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `x` REAL NOT NULL, `y` REAL NOT NULL, `z` REAL NOT NULL, `timestamp` INTEGER NOT NULL, `dateString` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "x",
+            "columnName": "x",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "y",
+            "columnName": "y",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "z",
+            "columnName": "z",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateString",
+            "columnName": "dateString",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "accelerometer_data",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `x` REAL NOT NULL, `y` REAL NOT NULL, `z` REAL NOT NULL, `timestamp` INTEGER NOT NULL, `dateString` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "x",
+            "columnName": "x",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "y",
+            "columnName": "y",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "z",
+            "columnName": "z",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateString",
+            "columnName": "dateString",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "daily_session_stats",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dateString` TEXT NOT NULL, `totalMinutesRecorded` INTEGER NOT NULL, PRIMARY KEY(`dateString`))",
+        "fields": [
+          {
+            "fieldPath": "dateString",
+            "columnName": "dateString",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMinutesRecorded",
+            "columnName": "totalMinutesRecorded",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "dateString"
+          ]
+        }
+      },
+      {
+        "tableName": "resource_measurements",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tag` TEXT NOT NULL, `operationType` TEXT NOT NULL, `sensorConfig` TEXT NOT NULL, `batteryDeltaPercent` REAL NOT NULL, `ramPeakMb` REAL NOT NULL, `durationMs` INTEGER NOT NULL, `eerValue` REAL NOT NULL, `timestampMs` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationType",
+            "columnName": "operationType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sensorConfig",
+            "columnName": "sensorConfig",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batteryDeltaPercent",
+            "columnName": "batteryDeltaPercent",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ramPeakMb",
+            "columnName": "ramPeakMb",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eerValue",
+            "columnName": "eerValue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMs",
+            "columnName": "timestampMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "training_runs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startedAtMs` INTEGER NOT NULL, `finishedAtMs` INTEGER NOT NULL, `rounds` INTEGER NOT NULL, `trainWindows` INTEGER NOT NULL, `valWindows` INTEGER NOT NULL, `testWindows` INTEGER NOT NULL, `sessionCount` INTEGER NOT NULL, `lastValAuc` REAL NOT NULL, `lastValEer` REAL NOT NULL, `testAuc` REAL NOT NULL, `testEer` REAL NOT NULL, `testFar` REAL NOT NULL, `testFrr` REAL NOT NULL, `threshold` REAL NOT NULL, `completed` INTEGER NOT NULL, `errorMessage` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtMs",
+            "columnName": "startedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finishedAtMs",
+            "columnName": "finishedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rounds",
+            "columnName": "rounds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trainWindows",
+            "columnName": "trainWindows",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "valWindows",
+            "columnName": "valWindows",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testWindows",
+            "columnName": "testWindows",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionCount",
+            "columnName": "sessionCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastValAuc",
+            "columnName": "lastValAuc",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastValEer",
+            "columnName": "lastValEer",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testAuc",
+            "columnName": "testAuc",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testEer",
+            "columnName": "testEer",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testFar",
+            "columnName": "testFar",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testFrr",
+            "columnName": "testFrr",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "threshold",
+            "columnName": "threshold",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completed",
+            "columnName": "completed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "errorMessage",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "device_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMs` INTEGER NOT NULL, `type` TEXT NOT NULL, `detail` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMs",
+            "columnName": "timestampMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_device_events_timestampMs",
+            "unique": false,
+            "columnNames": [
+              "timestampMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_device_events_timestampMs` ON `${TABLE_NAME}` (`timestampMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "labeled_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `participantId` TEXT NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, `isOwner` INTEGER NOT NULL, `note` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "participantId",
+            "columnName": "participantId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isOwner",
+            "columnName": "isOwner",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_labeled_sessions_startMs",
+            "unique": false,
+            "columnNames": [
+              "startMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_labeled_sessions_startMs` ON `${TABLE_NAME}` (`startMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "mediciones_recursos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `etiqueta` TEXT NOT NULL, `tipoOperacion` TEXT NOT NULL, `configSensores` TEXT NOT NULL, `regimenAprendizaje` TEXT NOT NULL, `duracionMs` INTEGER NOT NULL, `nMuestras` INTEGER NOT NULL, `consumoMicroAh` INTEGER, `consumoMicroAhPorHora` REAL, `corrienteMediaMicroA` REAL, `consumoIntegradoMicroAh` REAL, `consumoIntegradoMicroAhPorHora` REAL, `metodoConsumo` TEXT NOT NULL, `tasaConsumoMicroAhPorHora` REAL, `valida` INTEGER NOT NULL, `pssMinKb` INTEGER NOT NULL, `pssMaxKb` INTEGER NOT NULL, `pssMedioKb` REAL NOT NULL, `invalidez` TEXT NOT NULL, `tMs` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "etiqueta",
+            "columnName": "etiqueta",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tipoOperacion",
+            "columnName": "tipoOperacion",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configSensores",
+            "columnName": "configSensores",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "regimenAprendizaje",
+            "columnName": "regimenAprendizaje",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "duracionMs",
+            "columnName": "duracionMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nMuestras",
+            "columnName": "nMuestras",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "consumoMicroAh",
+            "columnName": "consumoMicroAh",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "consumoMicroAhPorHora",
+            "columnName": "consumoMicroAhPorHora",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "corrienteMediaMicroA",
+            "columnName": "corrienteMediaMicroA",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "consumoIntegradoMicroAh",
+            "columnName": "consumoIntegradoMicroAh",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "consumoIntegradoMicroAhPorHora",
+            "columnName": "consumoIntegradoMicroAhPorHora",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "metodoConsumo",
+            "columnName": "metodoConsumo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tasaConsumoMicroAhPorHora",
+            "columnName": "tasaConsumoMicroAhPorHora",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "valida",
+            "columnName": "valida",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pssMinKb",
+            "columnName": "pssMinKb",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pssMaxKb",
+            "columnName": "pssMaxKb",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pssMedioKb",
+            "columnName": "pssMedioKb",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "invalidez",
+            "columnName": "invalidez",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tMs",
+            "columnName": "tMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mediciones_recursos_tMs",
+            "unique": false,
+            "columnNames": [
+              "tMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mediciones_recursos_tMs` ON `${TABLE_NAME}` (`tMs`)"
+          },
+          {
+            "name": "index_mediciones_recursos_configSensores",
+            "unique": false,
+            "columnNames": [
+              "configSensores"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mediciones_recursos_configSensores` ON `${TABLE_NAME}` (`configSensores`)"
+          }
+        ]
+      },
+      {
+        "tableName": "mediciones_latencia",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `etiqueta` TEXT NOT NULL, `configSensores` TEXT NOT NULL, `regimenAprendizaje` TEXT NOT NULL, `n` INTEGER NOT NULL, `mediaMs` REAL NOT NULL, `medianaMs` REAL NOT NULL, `p95Ms` REAL NOT NULL, `minMs` REAL NOT NULL, `maxMs` REAL NOT NULL, `tMs` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "etiqueta",
+            "columnName": "etiqueta",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configSensores",
+            "columnName": "configSensores",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "regimenAprendizaje",
+            "columnName": "regimenAprendizaje",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "n",
+            "columnName": "n",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaMs",
+            "columnName": "mediaMs",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "medianaMs",
+            "columnName": "medianaMs",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "p95Ms",
+            "columnName": "p95Ms",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minMs",
+            "columnName": "minMs",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxMs",
+            "columnName": "maxMs",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tMs",
+            "columnName": "tMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mediciones_latencia_tMs",
+            "unique": false,
+            "columnNames": [
+              "tMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mediciones_latencia_tMs` ON `${TABLE_NAME}` (`tMs`)"
+          },
+          {
+            "name": "index_mediciones_latencia_configSensores",
+            "unique": false,
+            "columnNames": [
+              "configSensores"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mediciones_latencia_configSensores` ON `${TABLE_NAME}` (`configSensores`)"
+          }
+        ]
+      },
+      {
+        "tableName": "participantes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `seudonimo` TEXT NOT NULL, `fechaAltaMs` INTEGER NOT NULL, `tramoEdad` TEXT NOT NULL, `sexo` TEXT NOT NULL, `lateralidad` TEXT NOT NULL, `competenciaLatin` TEXT NOT NULL, `notas` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seudonimo",
+            "columnName": "seudonimo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fechaAltaMs",
+            "columnName": "fechaAltaMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tramoEdad",
+            "columnName": "tramoEdad",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sexo",
+            "columnName": "sexo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lateralidad",
+            "columnName": "lateralidad",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "competenciaLatin",
+            "columnName": "competenciaLatin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notas",
+            "columnName": "notas",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_participantes_seudonimo",
+            "unique": true,
+            "columnNames": [
+              "seudonimo"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_participantes_seudonimo` ON `${TABLE_NAME}` (`seudonimo`)"
+          }
+        ]
+      },
+      {
+        "tableName": "sesiones_controladas",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `participanteId` INTEGER NOT NULL, `dispositivoId` TEXT NOT NULL, `inicioMs` INTEGER NOT NULL, `finMs` INTEGER NOT NULL, `ordenDispositivo` INTEGER NOT NULL, `semillaSeleccion` INTEGER NOT NULL, `versionApp` TEXT NOT NULL, `versionProtocolo` TEXT NOT NULL, `bateriaInicio` REAL, `bateriaFin` REAL, `estado` TEXT NOT NULL, `motivoInvalidacion` TEXT NOT NULL, FOREIGN KEY(`participanteId`) REFERENCES `participantes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "participanteId",
+            "columnName": "participanteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dispositivoId",
+            "columnName": "dispositivoId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inicioMs",
+            "columnName": "inicioMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finMs",
+            "columnName": "finMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ordenDispositivo",
+            "columnName": "ordenDispositivo",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semillaSeleccion",
+            "columnName": "semillaSeleccion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "versionApp",
+            "columnName": "versionApp",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "versionProtocolo",
+            "columnName": "versionProtocolo",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bateriaInicio",
+            "columnName": "bateriaInicio",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bateriaFin",
+            "columnName": "bateriaFin",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "estado",
+            "columnName": "estado",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "motivoInvalidacion",
+            "columnName": "motivoInvalidacion",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sesiones_controladas_participanteId",
+            "unique": false,
+            "columnNames": [
+              "participanteId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sesiones_controladas_participanteId` ON `${TABLE_NAME}` (`participanteId`)"
+          },
+          {
+            "name": "index_sesiones_controladas_inicioMs",
+            "unique": false,
+            "columnNames": [
+              "inicioMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sesiones_controladas_inicioMs` ON `${TABLE_NAME}` (`inicioMs`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "participantes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "participanteId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "bloques",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sesionId` INTEGER NOT NULL, `indice` INTEGER NOT NULL, `inicioMs` INTEGER NOT NULL, `finMs` INTEGER NOT NULL, `idioma` TEXT NOT NULL, `parrafosUsados` TEXT NOT NULL, `pulsaciones` INTEGER NOT NULL, `errores` INTEGER NOT NULL, `borrados` INTEGER NOT NULL, `ppm` REAL NOT NULL, `precision` REAL NOT NULL, `interrumpido` INTEGER NOT NULL, `motivoInterrupcion` TEXT NOT NULL, FOREIGN KEY(`sesionId`) REFERENCES `sesiones_controladas`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sesionId",
+            "columnName": "sesionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "indice",
+            "columnName": "indice",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inicioMs",
+            "columnName": "inicioMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finMs",
+            "columnName": "finMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idioma",
+            "columnName": "idioma",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parrafosUsados",
+            "columnName": "parrafosUsados",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulsaciones",
+            "columnName": "pulsaciones",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errores",
+            "columnName": "errores",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "borrados",
+            "columnName": "borrados",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ppm",
+            "columnName": "ppm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "precision",
+            "columnName": "precision",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "interrumpido",
+            "columnName": "interrumpido",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "motivoInterrupcion",
+            "columnName": "motivoInterrupcion",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_bloques_sesionId",
+            "unique": false,
+            "columnNames": [
+              "sesionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_bloques_sesionId` ON `${TABLE_NAME}` (`sesionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sesiones_controladas",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sesionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "muestras_inerciales",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `bloqueId` INTEGER NOT NULL, `tParedMs` INTEGER NOT NULL, `tMonotonoNs` INTEGER NOT NULL, `accX` REAL NOT NULL, `accY` REAL NOT NULL, `accZ` REAL NOT NULL, `gyrX` REAL NOT NULL, `gyrY` REAL NOT NULL, `gyrZ` REAL NOT NULL, `magX` REAL, `magY` REAL, `magZ` REAL, FOREIGN KEY(`bloqueId`) REFERENCES `bloques`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bloqueId",
+            "columnName": "bloqueId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tParedMs",
+            "columnName": "tParedMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tMonotonoNs",
+            "columnName": "tMonotonoNs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accX",
+            "columnName": "accX",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accY",
+            "columnName": "accY",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accZ",
+            "columnName": "accZ",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gyrX",
+            "columnName": "gyrX",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gyrY",
+            "columnName": "gyrY",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gyrZ",
+            "columnName": "gyrZ",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "magX",
+            "columnName": "magX",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "magY",
+            "columnName": "magY",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "magZ",
+            "columnName": "magZ",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_muestras_inerciales_bloqueId_tMonotonoNs",
+            "unique": false,
+            "columnNames": [
+              "bloqueId",
+              "tMonotonoNs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_muestras_inerciales_bloqueId_tMonotonoNs` ON `${TABLE_NAME}` (`bloqueId`, `tMonotonoNs`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "bloques",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bloqueId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "eventos_tecleo",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `bloqueId` INTEGER NOT NULL, `parrafoId` TEXT NOT NULL, `posicion` INTEGER NOT NULL, `esperado` TEXT NOT NULL, `recibido` TEXT NOT NULL, `acierto` INTEGER NOT NULL, `borrado` INTEGER NOT NULL, `tDownMs` INTEGER NOT NULL, `tUpMs` INTEGER NOT NULL, `x` REAL, `y` REAL, `presion` REAL, `area` REAL, FOREIGN KEY(`bloqueId`) REFERENCES `bloques`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bloqueId",
+            "columnName": "bloqueId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parrafoId",
+            "columnName": "parrafoId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "posicion",
+            "columnName": "posicion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "esperado",
+            "columnName": "esperado",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recibido",
+            "columnName": "recibido",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acierto",
+            "columnName": "acierto",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "borrado",
+            "columnName": "borrado",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tDownMs",
+            "columnName": "tDownMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tUpMs",
+            "columnName": "tUpMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "x",
+            "columnName": "x",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "y",
+            "columnName": "y",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "presion",
+            "columnName": "presion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "area",
+            "columnName": "area",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_eventos_tecleo_bloqueId_tDownMs",
+            "unique": false,
+            "columnNames": [
+              "bloqueId",
+              "tDownMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_eventos_tecleo_bloqueId_tDownMs` ON `${TABLE_NAME}` (`bloqueId`, `tDownMs`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "bloques",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bloqueId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "covariables_sesion",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sesionId` INTEGER NOT NULL, `tMs` INTEGER NOT NULL, `luz` REAL, `proximidad` REAL, `tempBateria` REAL, `bateria` REAL, FOREIGN KEY(`sesionId`) REFERENCES `sesiones_controladas`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sesionId",
+            "columnName": "sesionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tMs",
+            "columnName": "tMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "luz",
+            "columnName": "luz",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "proximidad",
+            "columnName": "proximidad",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "tempBateria",
+            "columnName": "tempBateria",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bateria",
+            "columnName": "bateria",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_covariables_sesion_sesionId_tMs",
+            "unique": false,
+            "columnNames": [
+              "sesionId",
+              "tMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_covariables_sesion_sesionId_tMs` ON `${TABLE_NAME}` (`sesionId`, `tMs`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sesiones_controladas",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sesionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '232a166e5910421cf8a8b9122761288c')"
+    ]
+  }
+}

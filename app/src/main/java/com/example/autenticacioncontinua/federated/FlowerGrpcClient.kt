@@ -13,6 +13,7 @@ import com.example.autenticacioncontinua.ml.training.EvaluationResult
 import com.example.autenticacioncontinua.ml.training.LocalEvaluator
 import com.example.autenticacioncontinua.ml.training.LocalTrainer
 import com.example.autenticacioncontinua.monitoring.IBatteryMonitor
+import com.example.autenticacioncontinua.monitoring.MedidorDeOperacion
 import com.example.autenticacioncontinua.monitoring.IRamMonitor
 import com.google.protobuf.ByteString
 import flwr.android_client.ClientMessage
@@ -72,7 +73,18 @@ class FlowerGrpcClient(
     private val clientIdentity: ClientIdentity,
     private val batteryMonitor: IBatteryMonitor,
     private val ramMonitor: IRamMonitor,
-    private val metricsRepository: IResourceMeasurementRepository
+    private val metricsRepository: IResourceMeasurementRepository,
+    /**
+     * Medicion con instrumentos que si resuelven (bloque de carga + PSS del
+     * proceso + latencias).
+     *
+     * Convive con `batteryMonitor`/`ramMonitor`, que siguen escribiendo en
+     * `resource_measurements`: esas filas se conservan como registro de lo
+     * que se hizo hasta el 23/08, pero el delta de porcentaje que guardan no
+     * resuelve una ronda y el pico de RAM es el del dispositivo entero. Lo
+     * reportable sale de aqui.
+     */
+    private val medidor: MedidorDeOperacion
 ) {
     private var channel: ManagedChannel? = null
     private var dataset: LocalDataset? = null
@@ -299,6 +311,13 @@ class FlowerGrpcClient(
                 "es la terminación normal de la sesión")
         } finally {
             clientMessages.close()
+            // Las latencias se vuelcan al CERRAR la sesion, no por ronda: una
+            // serie de un elemento no tiene mediana ni p95 que signifiquen
+            // nada, y una fila por ronda llenaria la tabla sin anadir
+            // informacion. Va en `finally` para que una sesion abortada no se
+            // lleve por delante las rondas que si se completaron.
+            runCatching { medidor.volcarLatencias(MedidorDeOperacion.REGIMEN_FEDERADO) }
+                .onFailure { Log.w(TAG, "no se pudieron volcar las latencias", it) }
         }
     }
 
@@ -337,16 +356,22 @@ class FlowerGrpcClient(
         val learningRate = config["lr"]?.double?.toFloat()
             ?.takeIf { it > 0f } ?: manifest.learningRate
 
-        val result = localTrainer.fit(
-            globalEncoder = globalEncoder,
-            trainWindows = local.train,
-            learningRate = learningRate,
-            epochs = epochs,
-            emparejarImpostores = emparejarImpostores,
-            // Semilla distinta por ronda: el barajado y el muestreo de
-            // impostores deben variar, a diferencia de la partición.
-            seed = clientIdentity.splitSeed + round
-        )
+        val result = medidor.medir(
+            etiqueta = "${MedidorDeOperacion.RONDA_FL}_$round",
+            tipoOperacion = MedidorDeOperacion.RONDA_FL,
+            regimenAprendizaje = MedidorDeOperacion.REGIMEN_FEDERADO
+        ) {
+            localTrainer.fit(
+                globalEncoder = globalEncoder,
+                trainWindows = local.train,
+                learningRate = learningRate,
+                epochs = epochs,
+                emparejarImpostores = emparejarImpostores,
+                // Semilla distinta por ronda: el barajado y el muestreo de
+                // impostores deben variar, a diferencia de la partición.
+                seed = clientIdentity.splitSeed + round
+            )
+        }
 
         val durationMs = System.currentTimeMillis() - startedAt
         recordResourceUsage(tag, "training", durationMs, eer = -1.0)
@@ -389,7 +414,11 @@ class FlowerGrpcClient(
         ramMonitor.startMeasurement(tag)
         val startedAt = System.currentTimeMillis()
 
-        val result = localEvaluator.evaluate(
+        val result = medidor.medir(
+            etiqueta = "${MedidorDeOperacion.EVALUACION_FL}_$round",
+            tipoOperacion = MedidorDeOperacion.EVALUACION_FL,
+            regimenAprendizaje = MedidorDeOperacion.REGIMEN_FEDERADO
+        ) { localEvaluator.evaluate(
             globalEncoder = decodeEncoder(evaluateIns.parameters),
             evaluationWindows = local.validation,
             // Aquí no hay un tercer conjunto genuino disponible, así que se
@@ -413,7 +442,7 @@ class FlowerGrpcClient(
             calibrationWindows = local.validation,
             emparejarImpostores = emparejarImpostores,
             seed = clientIdentity.splitSeed + round
-        )
+        ) }
 
         val durationMs = System.currentTimeMillis() - startedAt
         recordResourceUsage(tag, "fl_round", durationMs, eer = result.eer)
