@@ -53,7 +53,20 @@ class CapturaInercial(
     private val alcance: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
 
-    private var trabajo: Job? = null
+    /**
+     * El colector y el escritor son trabajos SEPARADOS, y eso es lo que permite
+     * cerrar bien.
+     *
+     * Estuvieron juntos bajo un solo `Job` hasta el 30/08, y cancelarlo mataba
+     * a los dos: el escritor moría con su lote a medio llenar y esas filas se
+     * perdían. Como sólo escribe al juntar [MuestraInercialEntity.LOTE], en un
+     * bloque real se iban hasta 499 muestras —los últimos segundos de cada
+     * bloque— sin que nada fallara. Ahora se cancela SÓLO el colector, se cierra
+     * la cola y se espera al escritor, que termina su bucle al vaciarla y
+     * escribe lo que le quede.
+     */
+    private var trabajoColector: Job? = null
+    private var trabajoEscritor: Job? = null
     private var alineador: AlineadorInercial? = null
     private var cola: Channel<MuestraInercialEntity>? = null
 
@@ -61,7 +74,7 @@ class CapturaInercial(
     private var bloqueActual = 0L
     @Volatile private var perdidas = 0L
 
-    val estaCapturando: Boolean get() = trabajo?.isActive == true
+    val estaCapturando: Boolean get() = trabajoColector?.isActive == true
 
     fun iniciar(bloqueId: Long) {
         check(!estaCapturando) { "ya hay una captura en curso" }
@@ -78,21 +91,19 @@ class CapturaInercial(
 
         for (f in fuentes()) f.iniciar()
 
-        trabajo = alcance.launch {
-            // Un solo consumidor de las tres corrientes: el alineador NO es
-            // seguro entre hilos y no hace falta que lo sea si todo lo que le
-            // llega pasa por aquí.
-            launch {
-                merge(acelerometro.flujo(), giroscopio.flujo(), magnetometro.flujo())
-                    .collect { muestra ->
-                        ali.aceptar(muestra)?.let { fila ->
-                            val ok = ch.trySend(fila).isSuccess
-                            if (!ok) perdidas++
-                        }
+        // Un solo consumidor de las tres corrientes: el alineador NO es seguro
+        // entre hilos y no hace falta que lo sea si todo lo que le llega pasa
+        // por aquí.
+        trabajoColector = alcance.launch {
+            merge(acelerometro.flujo(), giroscopio.flujo(), magnetometro.flujo())
+                .collect { muestra ->
+                    ali.aceptar(muestra)?.let { fila ->
+                        val ok = ch.trySend(fila).isSuccess
+                        if (!ok) perdidas++
                     }
-            }
-            launch { vaciar(ch) }
+                }
         }
+        trabajoEscritor = alcance.launch { vaciar(ch) }
         Log.i(TAG, "captura iniciada en el bloque $bloqueId; " +
             "magnetometro=${magnetometro.disponible}")
     }
@@ -100,23 +111,33 @@ class CapturaInercial(
     /**
      * Para los sensores, vacía lo que quede en la cola y devuelve el resumen.
      *
-     * El vaciado final va en [NonCancellable]: llega justo cuando se está
-     * cancelando el trabajo, y sin eso los últimos segundos de tecleo del
-     * participante —los del final del bloque, que no son menos válidos que los
-     * demás— se perderían.
+     * EL ORDEN ES TODO EL MÉTODO:
+     *
+     *  1. se paran los sensores, para que no entren muestras nuevas;
+     *  2. se cancela SÓLO el colector — el escritor no, o su lote a medio
+     *     llenar se iría con él;
+     *  3. se cierra la cola, con lo que el `for (fila in ch)` del escritor
+     *     termina en cuanto la vacía;
+     *  4. se le espera. Ahí es donde escribe el último lote parcial, que son
+     *     los últimos segundos de tecleo del participante y no valen menos que
+     *     los demás.
+     *
+     * El paso 4 va en [NonCancellable] porque `detener` se llama desde el cierre
+     * del bloque, que puede venir de una cancelación.
      */
     suspend fun detener(): ResumenCaptura? {
         val ali = alineador ?: return null
         val ch = cola ?: return null
 
         for (f in fuentes()) f.detener()
-        trabajo?.cancel()
-        trabajo = null
+        trabajoColector?.cancel()
+        trabajoColector = null
 
         withContext(NonCancellable) {
             ch.close()
-            vaciar(ch)
+            trabajoEscritor?.join()
         }
+        trabajoEscritor = null
         alineador = null
         cola = null
 

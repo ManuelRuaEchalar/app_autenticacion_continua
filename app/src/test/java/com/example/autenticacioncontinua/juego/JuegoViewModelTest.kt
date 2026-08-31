@@ -1,9 +1,14 @@
 package com.example.autenticacioncontinua.juego
 
+import com.example.autenticacioncontinua.controlada.AmbientalEnMemoria
+import com.example.autenticacioncontinua.controlada.FuenteFalsa
 import com.example.autenticacioncontinua.controlada.SesionesEnMemoria
+import com.example.autenticacioncontinua.controlada.TramosEnMemoria
 import com.example.autenticacioncontinua.data.local.entity.controlada.BloqueEntity
 import com.example.autenticacioncontinua.data.local.entity.controlada.EstadoSesion
+import com.example.autenticacioncontinua.data.sensor.CapturaInercial
 import com.example.autenticacioncontinua.domain.juego.FaseDeSesion
+import com.example.autenticacioncontinua.domain.sensor.TipoSensor
 import com.example.autenticacioncontinua.domain.tecleo.FaseDePulsacion
 import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
 import com.example.autenticacioncontinua.domain.textos.Parrafo
@@ -45,6 +50,14 @@ class JuegoViewModelTest {
 
     private val despachador = StandardTestDispatcher()
     private lateinit var sesiones: SesionesEnMemoria
+    private lateinit var ambiental: AmbientalEnMemoria
+    private lateinit var tramos: TramosEnMemoria
+    private lateinit var acelerometro: FuenteFalsa
+    private lateinit var giroscopio: FuenteFalsa
+    private lateinit var magnetometro: FuenteFalsa
+
+    /** Las capturas creadas, una por bloque, para poder mirarlas después. */
+    private val capturas = mutableListOf<CapturaInercial>()
 
     private val selector = SelectorDeParrafos(
         mapOf(
@@ -58,14 +71,36 @@ class JuegoViewModelTest {
         Dispatchers.setMain(despachador)
         sesiones = SesionesEnMemoria()
         sesiones.seudonimoDe[PARTICIPANTE] = "P01"
+        ambiental = AmbientalEnMemoria()
+        tramos = TramosEnMemoria()
+        acelerometro = FuenteFalsa(TipoSensor.ACELEROMETRO)
+        giroscopio = FuenteFalsa(TipoSensor.GIROSCOPIO)
+        magnetometro = FuenteFalsa(TipoSensor.MAGNETOMETRO)
+        capturas.clear()
     }
 
     @After
     fun limpiar() = Dispatchers.resetMain()
 
-    private fun vm() = JuegoViewModel(
+    /**
+     * @param alcance el de la propia prueba, para que la captura corra sobre el
+     *   reloj virtual. Con el `Dispatchers.IO` por defecto, las corrutinas del
+     *   escritor viven fuera del scheduler y `advanceUntilIdle` no las espera.
+     */
+    private fun TestScope.vm() = JuegoViewModel(
         sesiones = sesiones,
         selector = selector,
+        capturaDe = {
+            CapturaInercial(
+                acelerometro = acelerometro,
+                giroscopio = giroscopio,
+                magnetometro = magnetometro,
+                repositorio = sesiones,
+                alcance = this
+            ).also { capturas += it }
+        },
+        ambiental = ambiental,
+        tramos = tramos,
         // El reloj del dominio y el de las corrutinas son el MISMO. Si fueran
         // distintos, el bloque terminaria cuando lo dijera uno y las duraciones
         // se registrarian segun el otro.
@@ -73,6 +108,26 @@ class JuegoViewModelTest {
         bateria = { 80f },
         semillaDe = { SEMILLA }
     )
+
+    /** Una muestra de acelerometro con su giroscopio, que es lo que el alineador exige. */
+    private fun emitirMuestra(tNs: Long) {
+        giroscopio.emitir(tNs)
+        acelerometro.emitir(tNs)
+    }
+
+    /**
+     * Espera a que la captura se haya suscrito a los sensores.
+     *
+     * Sin esto la prueba emitiria contra un `SharedFlow` sin colectores, que
+     * descarta lo emitido en silencio: mediria su propia carrera, no el codigo.
+     */
+    private fun TestScope.esperarColector() {
+        repeat(20) {
+            if (acelerometro.hayColector && giroscopio.hayColector) return
+            runCurrent()
+        }
+        error("la captura no se suscribio a los sensores")
+    }
 
     /**
      * Avanza el reloj virtual.
@@ -391,8 +446,138 @@ class JuegoViewModelTest {
             .filter { it.isNotBlank() }
             .toSet()
 
+    // ------------------------------------------------------------------
+    // Fase 8: la recoleccion ambiental y la captura inercial
+    // ------------------------------------------------------------------
+
+    /**
+     * LA RESTRICCIÓN R1 EN FORMA DE PRUEBA.
+     *
+     * Durante una visita el teléfono lo usa alguien que no es el dueño. Si la
+     * recolección ambiental siguiera corriendo, sus muestras caerían en
+     * `accelerometer_data` como uso del dueño y el modelo personal se
+     * entrenaría con datos de otra persona. El fallo no da ningún síntoma.
+     *
+     * Y el ORDEN importa: suspender DESPUÉS de abrir la sesión dejaría una
+     * ventana en la que todavía se puede arrancar una ráfaga.
+     */
+    @Test
+    fun `la recoleccion ambiental se suspende antes de abrir la sesion`() = runTest {
+        val v = vm()
+        assertFalse(ambiental.estaSuspendido)
+
+        v.iniciar(PARTICIPANTE, "A")
+        runCurrent()
+
+        assertTrue("suspendida ya en la aclimatacion", ambiental.estaSuspendido)
+        assertEquals(1, ambiental.suspensiones)
+        assertEquals(1, sesiones.sesiones.size)
+    }
+
+    @Test
+    fun `al terminar la visita la recoleccion ambiental se reanuda`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+
+        assertFalse("no puede quedarse suspendida", ambiental.estaSuspendido)
+        assertEquals(1, ambiental.reanudaciones)
+    }
+
+    /**
+     * Dejarla suspendida seria PEOR que no haberla suspendido: el dueño dejaría
+     * de recoger indefinidamente y sin ningún aviso.
+     */
+    @Test
+    fun `tambien se reanuda cuando la visita se aborta`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        avanzar(FaseDeSesion.ACLIMATACION_MS + JuegoViewModel.TIC_MS)
+        v.onPausa("llamada entrante")
+        advanceUntilIdle()
+
+        assertFalse(ambiental.estaSuspendido)
+        assertEquals(EstadoSesion.ABORTADA.name, sesiones.sesiones.single().estado)
+    }
+
+    /**
+     * Los TIRANTES del cinturón anterior: si la suspensión fallara y entraran
+     * muestras ambientales durante la visita, el tramo marcado como NO del dueño
+     * hace que `ExclusionEtiquetada` las descarte igualmente.
+     */
+    @Test
+    fun `la visita queda registrada como tramo que no es del dueño`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        runCurrent()
+
+        val tramo = tramos.tramos.single()
+        assertEquals("P01", tramo.participantId)
+        assertFalse("marcado como del dueño no excluiria nada", tramo.isOwner)
+        assertTrue("abierto mientras dura la visita", tramo.enCurso)
+
+        advanceUntilIdle()
+        assertFalse("y cerrado al terminar", tramos.tramos.single().enCurso)
+    }
+
+    /** Cada bloque enciende y apaga los sensores; ninguno se queda vivo. */
+    @Test
+    fun `los sensores se paran al acabar la visita`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+
+        assertEquals("una captura por bloque", 3, capturas.size)
+        assertTrue("ninguna sigue capturando", capturas.none { it.estaCapturando })
+        assertTrue(acelerometro.detenida && giroscopio.detenida && magnetometro.detenida)
+    }
+
+    /**
+     * LO QUE FALTABA DE LA FASE 7: `muestras_inerciales` estaba vacía.
+     *
+     * No basta con comprobar que se llamó a `iniciar`: lo que importa es que las
+     * muestras acaban en la base atadas al bloque correcto, y entre una cosa y
+     * otra están el alineador —que descarta el acelerómetro sin giroscopio— y el
+     * escritor por lotes.
+     */
+    @Test
+    fun `las muestras inerciales del bloque acaban en la base con su bloqueId`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        avanzar(FaseDeSesion.ACLIMATACION_MS + JuegoViewModel.TIC_MS)
+
+        val bloque = sesiones.bloques.single()
+        esperarColector()
+        repeat(MUESTRAS) { i -> emitirMuestra(tNs = i * 10_000_000L) }
+        advanceUntilIdle()
+
+        val suyas = sesiones.muestras.filter { it.bloqueId == bloque.id }
+        assertEquals(MUESTRAS, suyas.size)
+        assertEquals("no hay muestras de ningun otro bloque", MUESTRAS, sesiones.muestras.size)
+        assertEquals(
+            "y llegan en orden, con su reloj monotono",
+            (0 until MUESTRAS).map { it * 10_000_000L },
+            suyas.map { it.tMonotonoNs }
+        )
+    }
+
+    /** Durante la aclimatación no se capturan sensores: no hay bloque al que atarlos. */
+    @Test
+    fun `la aclimatacion no captura muestras inerciales`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        runCurrent()
+
+        repeat(10) { i -> emitirMuestra(tNs = i * 10_000_000L) }
+        avanzar(FaseDeSesion.ACLIMATACION_MS / 2)
+
+        assertTrue(capturas.isEmpty())
+        assertTrue(sesiones.muestras.isEmpty())
+    }
+
     private companion object {
         const val PARTICIPANTE = 1L
+        const val MUESTRAS = 25
         const val SEMILLA = 12345L
 
         /** Corto a propósito: se agota rápido y obliga a encadenar párrafos. */

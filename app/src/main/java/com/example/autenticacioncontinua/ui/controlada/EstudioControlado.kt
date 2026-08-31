@@ -63,6 +63,26 @@ fun EstudioControlado(
                         participantesVm.cargar()
                     }
                 )
+            } else if (estadoP.verificando) {
+                // P3. Entre elegir participante y teclear va la lista, y no se
+                // puede saltar: es lo único que separa una visita bien montada
+                // de una que produce datos que parecen buenos y no lo son.
+                BackHandler(enabled = true) { participantesVm.cerrarVerificacion() }
+                PantallaVerificacion(
+                    estado = estadoP,
+                    onAlternar = participantesVm::alternarComprobacion,
+                    onAsignarEtiqueta = participantesVm::asignarEtiqueta,
+                    onVolver = participantesVm::cerrarVerificacion,
+                    onEmpezar = {
+                        val p = estadoP.seleccionado
+                        val plan = estadoP.plan
+                        if (p != null && plan != null) {
+                            participantesVm.cerrarVerificacion()
+                            juegoVm.iniciar(p.id, plan.dispositivoReal)
+                            jugando = true
+                        }
+                    }
+                )
             } else {
                 BackHandler(enabled = true) { onSalir() }
                 PantallaParticipantes(
@@ -71,14 +91,10 @@ fun EstudioControlado(
                     onSeleccionar = participantesVm::seleccionar,
                     onAlta = participantesVm::alta,
                     onLimpiarMensajes = participantesVm::limpiarMensajes,
-                    onContinuar = {
-                        val p = estadoP.seleccionado
-                        val plan = estadoP.plan
-                        if (p != null && plan != null) {
-                            juegoVm.iniciar(p.id, plan.dispositivoReal)
-                            jugando = true
-                        }
-                    },
+                    // "Continuar" ya no arranca el minijuego: pasa por la lista
+                    // de verificación. Es el único camino, para que no haya un
+                    // atajo que se acabe usando por prisa.
+                    onContinuar = participantesVm::abrirVerificacion,
                     onPedirBorrado = participantesVm::pedirBorrado,
                     onCancelarBorrado = participantesVm::cancelarBorrado,
                     onConfirmarBorrado = participantesVm::confirmarBorrado

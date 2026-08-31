@@ -491,6 +491,16 @@ fun StatusCard(state: UiState) {
             "Grabando una ráfaga atribuida a un participante concreto. Estos datos " +
                 "NO cuentan como uso ambiental del dueño."
         )
+
+        // Mismo argumento que arriba: si aquí pusiera "Detectando uso continuo"
+        // mientras un participante hace su visita, una suspensión que hubiera
+        // fallado no se notaría hasta mirar los datos.
+        SessionState.SUSPENDIDA_POR_ESTUDIO -> Triple(
+            "Recolección suspendida", AccentOrange,
+            "Hay una sesión controlada en curso. La recolección ambiental está " +
+                "parada para que el uso del participante no entre como uso del dueño; " +
+                "se reanuda al terminar la visita."
+        )
     }
 
     Card(

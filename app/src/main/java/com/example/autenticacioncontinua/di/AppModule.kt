@@ -13,6 +13,7 @@ import com.example.autenticacioncontinua.data.repository.SesionControladaReposit
 import com.example.autenticacioncontinua.data.repository.TrainingHistoryRepositoryImpl
 import com.example.autenticacioncontinua.device.protection.ProtectionStatus
 import com.example.autenticacioncontinua.data.controlada.IdentidadDelDispositivo
+import com.example.autenticacioncontinua.data.controlada.IdentidadEnPreferencias
 import com.example.autenticacioncontinua.data.sensor.CapturaInercial
 import com.example.autenticacioncontinua.data.textos.CorpusDeTextos
 import com.example.autenticacioncontinua.device.sensor.AccelerometerSensorImpl
@@ -170,7 +171,7 @@ val appModule = module {
     // Que terminal es este (A o B). Etiqueta del PROTOCOLO, no del aparato: si
     // uno se rompe, el repuesto hereda la etiqueta o la secuencia alternada de
     // todos los participantes se rompe a mitad del estudio.
-    single { IdentidadDelDispositivo(androidContext()) }
+    single<IdentidadDelDispositivo> { IdentidadEnPreferencias(androidContext()) }
 
     // El corpus se carga entero en memoria (~800 KB) para que elegir un parrafo
     // no toque el disco a mitad de un bloque cronometrado.
@@ -181,7 +182,11 @@ val appModule = module {
         ParticipantesViewModel(
             participantes = get(),
             sesiones = get(),
-            dispositivoId = get<IdentidadDelDispositivo>().etiqueta
+            // El objeto entero, no la cadena: la lista de verificacion permite
+            // ASIGNAR la etiqueta cuando falta, y leerla una vez al construir el
+            // ViewModel hacia que el cambio no se viera hasta reiniciar.
+            identidad = get(),
+            bateria = { get<IBatteryMonitor>().getCurrentLevel().takeIf { it >= 0f } }
         )
     }
 
@@ -197,6 +202,13 @@ val appModule = module {
         JuegoViewModel(
             sesiones = get(),
             selector = get(),
+            // Una CapturaInercial NUEVA por bloque: la clase guarda el estado de
+            // una sola captura y sus contadores de perdidas y descartes se
+            // reportan por bloque. `CapturaInercial` ya esta declarada como
+            // `factory`, asi que cada `get()` devuelve una distinta.
+            capturaDe = { get() },
+            ambiental = get(),
+            tramos = get(),
             bateria = { get<IBatteryMonitor>().getCurrentLevel().takeIf { it >= 0f } }
         )
     }

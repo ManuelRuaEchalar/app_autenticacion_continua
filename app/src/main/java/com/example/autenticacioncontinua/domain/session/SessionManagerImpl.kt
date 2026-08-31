@@ -200,6 +200,11 @@ class SessionManagerImpl(
     override fun onDeviceUnlocked() {
         Log.d(TAG, "Device unlocked / screen on")
         screenOn = true
+        // La suspensión por sesión controlada manda sobre todo lo demás: durante
+        // una visita el teléfono lo está usando alguien que no es el dueño, y
+        // cada pantalla que se enciende es un desbloqueo que, sin esta guarda,
+        // arrancaría la cuenta atrás y acabaría grabando ambiental.
+        if (suspendido) return
         if (currentState == SessionState.RECORDING) return
         // Una captura etiquetada manda sobre la recolección automática: si al
         // desbloquear se cayera a MONITORING_USAGE, `startCountdown` acabaría
@@ -292,6 +297,47 @@ class SessionManagerImpl(
         nextBoutJob?.cancel()
         stopRecording()
         scope.cancel()
+    }
+
+    // ------------------------------------------------------------------
+    // Suspensión por sesión controlada (restricción R1)
+    // ------------------------------------------------------------------
+
+    @Volatile private var suspendido = false
+
+    override val estaSuspendido: Boolean get() = suspendido
+
+    /**
+     * Para la recolección ambiental sin matar el gestor.
+     *
+     * NO llama a [stopMonitoring]: ése cancela `scope`, y un scope cancelado no
+     * revive. Aquí sólo se cancelan los temporizadores y se cierra la ráfaga en
+     * curso, de modo que [reanudar] pueda volver a lanzar sobre el mismo scope.
+     *
+     * SE CORTA LA RÁFAGA EN CURSO si la había. Una ráfaga a medias cuyo final
+     * cae dentro de la visita mezclaría uso del dueño con uso del participante
+     * dentro de la misma sesión de `WindowSegmenter`, y el corte por hueco de
+     * 30 s no la separaría porque no habría hueco.
+     */
+    override fun suspender() {
+        if (suspendido) return
+        suspendido = true
+        countdownJob?.cancel()
+        nextBoutJob?.cancel()
+        if (currentState == SessionState.RECORDING) stopRecording()
+        currentState = SessionState.SUSPENDIDA_POR_ESTUDIO
+        Log.i(TAG, "Recoleccion ambiental SUSPENDIDA por sesion controlada")
+    }
+
+    override fun reanudar() {
+        if (!suspendido) return
+        suspendido = false
+        currentState = SessionState.IDLE
+        Log.i(TAG, "Recoleccion ambiental reanudada")
+        // Con la pantalla encendida se retoma la búsqueda de uso ya: al acabar
+        // la visita el investigador tiene el teléfono en la mano, y esperar al
+        // siguiente desbloqueo perdería ese tramo.
+        if (screenOn) onDeviceUnlocked()
     }
 
     override fun getState(): SessionState = currentState
@@ -477,6 +523,10 @@ class SessionManagerImpl(
         // Relanzarlo no aportaba nada: el propio bucle ya reintenta mientras
         // la pantalla siga encendida.
         if (countdownJob?.isActive == true) return
+        // Cinturón: aunque `onDeviceUnlocked` ya no llega aquí estando
+        // suspendido, `startCountdown` tiene varios caminos de entrada y basta
+        // uno para volver a grabar en mitad de una visita.
+        if (suspendido) return
         countdownJob = scope.launch {
             Log.d(
                 TAG,

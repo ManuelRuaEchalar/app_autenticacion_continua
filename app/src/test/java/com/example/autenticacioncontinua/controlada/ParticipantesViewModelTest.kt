@@ -1,6 +1,8 @@
 package com.example.autenticacioncontinua.controlada
 
+import com.example.autenticacioncontinua.data.controlada.IdentidadDelDispositivo
 import com.example.autenticacioncontinua.data.local.entity.controlada.EstadoSesion
+import com.example.autenticacioncontinua.domain.juego.ListaDeVerificacion
 import com.example.autenticacioncontinua.presentation.controlada.ParticipantesViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,8 +45,10 @@ class ParticipantesViewModelTest {
     @After
     fun limpiar() = Dispatchers.resetMain()
 
-    private fun vm(dispositivo: String = "A") =
-        ParticipantesViewModel(participantes, sesiones, dispositivo)
+    private fun vm(dispositivo: String = "A", bateria: Float? = 80f) =
+        ParticipantesViewModel(
+            participantes, sesiones, IdentidadFalsa(dispositivo), { bateria }
+        )
 
     // ------------------------------------------------------------------
     // Crear
@@ -348,6 +352,109 @@ class ParticipantesViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, v.estado.value.participantes.size)
+    }
+
+    // ------------------------------------------------------------------
+    // Lista de verificacion previa (P3)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `la lista se recalcula al abrirla, no se cachea`() = runTest {
+        var nivel = 80f
+        val v = ParticipantesViewModel(
+            participantes, sesiones, IdentidadFalsa("A"), { nivel }
+        )
+        advanceUntilIdle()
+        v.alta("P01")
+        advanceUntilIdle()
+
+        v.abrirVerificacion()
+        assertTrue(v.estado.value.verificacion.any { it.cumplida })
+
+        // Media hora despues la bateria ha bajado: la lista tiene que enterarse.
+        nivel = 12f
+        v.abrirVerificacion()
+        assertFalse(v.estado.value.puedeEmpezarLaVisita)
+    }
+
+    @Test
+    fun `con la lista marcada y todo en orden se puede empezar`() = runTest {
+        val v = vm()
+        advanceUntilIdle()
+        v.alta("P01")
+        advanceUntilIdle()
+
+        v.abrirVerificacion()
+        assertFalse("aun sin marcar las manuales", v.estado.value.puedeEmpezarLaVisita)
+
+        v.alternarComprobacion(ListaDeVerificacion.BRILLO)
+        v.alternarComprobacion(ListaDeVerificacion.NO_MOLESTAR)
+
+        assertTrue(v.estado.value.puedeEmpezarLaVisita)
+    }
+
+    /** Marcar una automatica no la cumple: es una medida, no una opinion. */
+    @Test
+    fun `marcar una comprobacion automatica no hace nada`() = runTest {
+        val v = vm(bateria = 10f)
+        advanceUntilIdle()
+        v.alta("P01")
+        advanceUntilIdle()
+        v.abrirVerificacion()
+
+        v.alternarComprobacion(ListaDeVerificacion.BATERIA)
+
+        assertFalse(ListaDeVerificacion.BATERIA in v.estado.value.marcadas)
+        assertFalse(v.estado.value.puedeEmpezarLaVisita)
+    }
+
+    /**
+     * Sin etiqueta A/B las sesiones saldrian con dispositivoId "?". Se puede
+     * asignar desde la propia lista, y la comprobacion tiene que pasar en el
+     * momento: mandar al investigador a otra pantalla es la clase de friccion
+     * que hace que la lista se salte.
+     */
+    @Test
+    fun `asignar la etiqueta desde la lista desbloquea esa comprobacion`() = runTest {
+        val v = ParticipantesViewModel(
+            participantes, sesiones,
+            IdentidadFalsa(IdentidadDelDispositivo.SIN_ASIGNAR), { 80f }
+        )
+        advanceUntilIdle()
+        v.alta("P01")
+        advanceUntilIdle()
+        sesiones.seudonimoDe[1L] = "P01"
+
+        v.abrirVerificacion()
+        assertTrue(
+            ListaDeVerificacion.ETIQUETA in
+                v.estado.value.pendientesDeVerificacion.map { it.clave }
+        )
+
+        v.asignarEtiqueta("B")
+        advanceUntilIdle()
+
+        assertEquals("B", v.estado.value.etiquetaDispositivo)
+        assertFalse(
+            ListaDeVerificacion.ETIQUETA in
+                v.estado.value.pendientesDeVerificacion.map { it.clave }
+        )
+        assertEquals("y el plan se recalcula con ella", "B", v.estado.value.plan?.dispositivoReal)
+    }
+
+    @Test
+    fun `cerrar la lista olvida lo marcado`() = runTest {
+        val v = vm()
+        advanceUntilIdle()
+        v.alta("P01")
+        advanceUntilIdle()
+        v.abrirVerificacion()
+        v.alternarComprobacion(ListaDeVerificacion.BRILLO)
+
+        v.cerrarVerificacion()
+
+        assertFalse(v.estado.value.verificando)
+        assertTrue("la siguiente visita se comprueba de cero", v.estado.value.marcadas.isEmpty())
     }
 
     @Test

@@ -12,38 +12,52 @@ import android.content.Context
  * poder heredar la etiqueta del que sustituye, o la secuencia alternada de
  * todos los participantes se rompería a mitad del estudio.
  *
- * Se fija UNA VEZ por terminal, al prepararlos, y no se vuelve a tocar. El
- * valor real de cada sesión se guarda de todos modos en
+ * Se fija UNA VEZ por terminal, en la lista de verificación previa, y no se
+ * vuelve a tocar. El valor real de cada sesión se guarda de todos modos en
  * `sesiones_controladas.dispositivoId`, así que aunque alguien lo cambiara por
  * error, lo ya recogido conserva la etiqueta con la que se recogió.
+ *
+ * ES UNA INTERFAZ porque quien la consume es un ViewModel que se prueba en la
+ * JVM, y la implementación real necesita un `Context` de Android.
  */
-class IdentidadDelDispositivo(context: Context) {
-
-    private val prefs =
-        context.getSharedPreferences("identidad_dispositivo", Context.MODE_PRIVATE)
+interface IdentidadDelDispositivo {
 
     var etiqueta: String
-        get() = prefs.getString(CLAVE, SIN_ASIGNAR) ?: SIN_ASIGNAR
-        set(valor) {
-            require(valor in ETIQUETAS_VALIDAS) {
-                "etiqueta '$valor': debe ser una de $ETIQUETAS_VALIDAS"
-            }
-            prefs.edit().putString(CLAVE, valor).apply()
-        }
 
     /**
      * `true` mientras nadie haya dicho qué terminal es éste.
      *
-     * La lista de verificación previa a la sesión lo comprueba: empezar sin
-     * etiqueta dejaría todas las sesiones marcadas como `?` y el diseño cruzado
-     * persona × dispositivo —que es la razón de ser de los dos aparatos— no se
-     * podría analizar.
+     * La lista de verificación previa lo comprueba y BLOQUEA el inicio: empezar
+     * sin etiqueta dejaría todas las sesiones marcadas como `?` y el diseño
+     * cruzado persona × dispositivo —que es la razón de ser de los dos
+     * aparatos— no se podría analizar.
      */
     val sinAsignar: Boolean get() = etiqueta == SIN_ASIGNAR
 
     companion object {
-        private const val CLAVE = "etiqueta"
         const val SIN_ASIGNAR = "?"
         val ETIQUETAS_VALIDAS = listOf("A", "B")
+    }
+}
+
+/** La de verdad: persiste en las preferencias del terminal. */
+class IdentidadEnPreferencias(context: Context) : IdentidadDelDispositivo {
+
+    private val prefs =
+        context.getSharedPreferences("identidad_dispositivo", Context.MODE_PRIVATE)
+
+    override var etiqueta: String
+        get() = prefs.getString(CLAVE, IdentidadDelDispositivo.SIN_ASIGNAR)
+            ?: IdentidadDelDispositivo.SIN_ASIGNAR
+        set(valor) {
+            require(valor in IdentidadDelDispositivo.ETIQUETAS_VALIDAS) {
+                "etiqueta '$valor': debe ser una de " +
+                    "${IdentidadDelDispositivo.ETIQUETAS_VALIDAS}"
+            }
+            prefs.edit().putString(CLAVE, valor).apply()
+        }
+
+    private companion object {
+        const val CLAVE = "etiqueta"
     }
 }

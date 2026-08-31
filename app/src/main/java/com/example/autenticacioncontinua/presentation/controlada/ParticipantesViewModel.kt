@@ -2,6 +2,9 @@ package com.example.autenticacioncontinua.presentation.controlada
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.autenticacioncontinua.data.controlada.IdentidadDelDispositivo
+import com.example.autenticacioncontinua.domain.juego.Comprobacion
+import com.example.autenticacioncontinua.domain.juego.ListaDeVerificacion
 import com.example.autenticacioncontinua.domain.model.controlada.Participante
 import com.example.autenticacioncontinua.domain.repository.IParticipanteRepository
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
@@ -32,8 +35,30 @@ data class EstadoParticipantes(
      * decisión informada; «¿seguro?» no lo es.
      */
     val borrando: Participante? = null,
-    val sesionesQueSeBorrarian: Int = 0
+    val sesionesQueSeBorrarian: Int = 0,
+
+    /** La etiqueta de ESTE terminal: `A`, `B` o `?` si nadie la asignó. */
+    val etiquetaDispositivo: String = IdentidadDelDispositivo.SIN_ASIGNAR,
+
+    /** Lista de verificación previa (P3). Se recalcula al abrirla. */
+    val verificacion: List<Comprobacion> = emptyList(),
+    val marcadas: Set<String> = emptySet(),
+    /** `true` mientras se enseña la lista, antes de arrancar el minijuego. */
+    val verificando: Boolean = false
 ) {
+    /**
+     * Si la lista de verificación deja empezar.
+     *
+     * Vive en el estado y no en la vista por lo mismo que [puedeIniciarSesion]:
+     * es una regla del protocolo. Empezar una visita con el brillo cambiado o
+     * sin etiqueta de terminal produce datos que parecen buenos y no lo son.
+     */
+    val puedeEmpezarLaVisita: Boolean
+        get() = verificacion.isNotEmpty() &&
+            ListaDeVerificacion.puedeEmpezar(verificacion, marcadas)
+
+    val pendientesDeVerificacion: List<Comprobacion>
+        get() = ListaDeVerificacion.pendientes(verificacion, marcadas)
     /**
      * La condición que la pantalla siguiente comprueba.
      *
@@ -69,9 +94,19 @@ data class EstadoParticipantes(
 class ParticipantesViewModel(
     private val participantes: IParticipanteRepository,
     private val sesiones: ISesionControladaRepository,
-    /** Identificador de ESTE terminal, para calcular el plan de la visita. */
-    private val dispositivoId: String
+    /**
+     * Identidad de ESTE terminal: la etiqueta `A`/`B` del protocolo.
+     *
+     * Se toma el objeto entero y no sólo la cadena porque la lista de
+     * verificación permite ASIGNARLA cuando falta. Antes se leía una vez al
+     * construir el ViewModel, así que asignarla no se veía hasta reiniciar.
+     */
+    private val identidad: IdentidadDelDispositivo,
+    /** Porcentaje de batería, o `null` si no se puede leer. */
+    private val bateria: () -> Float? = { null }
 ) : ViewModel() {
+
+    private val dispositivoId: String get() = identidad.etiqueta
 
     private val _estado = MutableStateFlow(EstadoParticipantes())
     val estado: StateFlow<EstadoParticipantes> = _estado.asStateFlow()
@@ -164,6 +199,56 @@ class ParticipantesViewModel(
             val n = sesiones.sesionesDe(p.id).size
             _estado.value = _estado.value.copy(borrando = p, sesionesQueSeBorrarian = n)
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Lista de verificacion previa (P3)
+    // ------------------------------------------------------------------
+
+    /**
+     * Abre la lista. Se RECALCULA cada vez, no se guarda.
+     *
+     * La bateria y la etiqueta pueden haber cambiado desde la visita anterior, y
+     * una lista cacheada diria que la bateria estaba al 80% cuando lleva media
+     * hora bajando.
+     */
+    fun abrirVerificacion() {
+        _estado.value = _estado.value.copy(
+            verificando = true,
+            marcadas = emptySet(),
+            etiquetaDispositivo = identidad.etiqueta,
+            verificacion = ListaDeVerificacion.para(
+                bateria = bateria(),
+                etiquetaAsignada = !identidad.sinAsignar,
+                hayParticipante = _estado.value.seleccionado != null
+            )
+        )
+    }
+
+    fun cerrarVerificacion() {
+        _estado.value = _estado.value.copy(verificando = false, marcadas = emptySet())
+    }
+
+    /** Marca o desmarca una comprobacion manual. Las automaticas se ignoran. */
+    fun alternarComprobacion(clave: String) {
+        val e = _estado.value
+        if (e.verificacion.any { it.clave == clave && it.automatica }) return
+        val nuevas = if (clave in e.marcadas) e.marcadas - clave else e.marcadas + clave
+        _estado.value = e.copy(marcadas = nuevas)
+    }
+
+    /**
+     * Fija la etiqueta A/B de este terminal.
+     *
+     * Es del PROTOCOLO, no del aparato: si un terminal se rompe, el repuesto
+     * hereda la etiqueta del que sustituye o la secuencia alternada de todos los
+     * participantes se rompe a mitad del estudio. Se fija una vez y no se vuelve
+     * a tocar; se recalcula la lista para que la comprobacion pase al momento.
+     */
+    fun asignarEtiqueta(etiqueta: String) {
+        identidad.etiqueta = etiqueta
+        abrirVerificacion()
+        _estado.value.seleccionado?.let { p -> viewModelScope.launch { planificar(p) } }
     }
 
     fun cancelarBorrado() {

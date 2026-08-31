@@ -3,20 +3,25 @@ package com.example.autenticacioncontinua.presentation.controlada
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.autenticacioncontinua.data.local.entity.controlada.EstadoSesion
+import com.example.autenticacioncontinua.data.sensor.CapturaInercial
 import com.example.autenticacioncontinua.domain.juego.EstadoDeBloque
 import com.example.autenticacioncontinua.domain.juego.FaseDeSesion
 import com.example.autenticacioncontinua.domain.juego.GuionDeSesion
 import com.example.autenticacioncontinua.domain.juego.MotorBloque
 import com.example.autenticacioncontinua.domain.juego.RelojBloque
+import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
+import com.example.autenticacioncontinua.domain.session.ISessionManager
 import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
 import com.example.autenticacioncontinua.domain.textos.SelectorDeParrafos
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 /** Cómo quedó un bloque, para la pantalla de resumen. */
@@ -29,7 +34,16 @@ data class ResumenBloque(
     val ppm: Float,
     val precision: Float,
     val interrumpido: Boolean,
-    val motivo: String
+    val motivo: String,
+    /**
+     * Filas escritas en `muestras_inerciales`. A 100 Hz un bloque de 100 s
+     * deberían ser ~10 000; muchas menos significa que el terminal no entregó
+     * la tasa pedida, y eso hay que verlo en el momento, no al analizar.
+     */
+    val muestrasInerciales: Long = 0L,
+    /** Muestras que la cola descartó por escritura lenta. Debería ser 0. */
+    val perdidasEnCola: Long = 0L,
+    val magnetometro: Boolean = false
 )
 
 /** Todo lo que la pantalla del minijuego pinta. */
@@ -98,6 +112,33 @@ data class EstadoJuego(
 class JuegoViewModel(
     private val sesiones: ISesionControladaRepository,
     private val selector: SelectorDeParrafos,
+    /**
+     * Captura de los tres sensores durante cada bloque.
+     *
+     * Se pide como fábrica y no como instancia: `CapturaInercial` guarda el
+     * estado de UNA captura y `iniciar` revienta si ya hay otra en curso. Una
+     * por bloque deja además que el bloque siguiente empiece con los contadores
+     * de pérdidas y descartes a cero, que es lo que se reporta por bloque.
+     */
+    private val capturaDe: () -> CapturaInercial,
+    /**
+     * Recolección ambiental. Se suspende mientras dura la visita (R1).
+     *
+     * Es la ÚNICA interacción permitida entre este módulo y la recogida
+     * ambiental, y va aquí y no en la pantalla porque es una regla del
+     * protocolo: si dependiera de que alguien la invoque desde la interfaz,
+     * bastaría un camino de navegación nuevo para saltársela.
+     */
+    private val ambiental: ISessionManager,
+    /**
+     * Tramos etiquetados. Se anota la visita entera como NO del dueño.
+     *
+     * Son los TIRANTES del cinturón anterior: si la suspensión fallara y
+     * entraran muestras ambientales durante la visita, `ExclusionEtiquetada`
+     * las descarta igualmente del entrenamiento del dueño. Dos mecanismos
+     * independientes para el mismo fallo, que es silencioso y caro.
+     */
+    private val tramos: ILabeledSessionRepository,
     private val ahora: () -> Long = { System.currentTimeMillis() },
     private val bateria: () -> Float? = { null },
     private val semillaDe: () -> Long = { Random.nextLong() }
@@ -115,6 +156,8 @@ class JuegoViewModel(
 
     private var reloj: RelojBloque? = null
     private var motor: MotorBloque? = null
+    private var captura: CapturaInercial? = null
+    private var tramoId = 0L
     private var bloqueId = 0L
     private var abortada = false
 
@@ -148,6 +191,8 @@ class JuegoViewModel(
         vistos = emptySet()
         reloj = null
         motor = null
+        captura = null
+        tramoId = 0L
         bloqueId = 0L
         abortada = false
         resumen.clear()
@@ -160,6 +205,20 @@ class JuegoViewModel(
             _estado.value = EstadoJuego(error = "no existe el participante $participanteId")
             return
         }
+
+        // EL ORDEN IMPORTA, y es el mismo que ya usa `startLabeledCapture`:
+        // primero se protege el corpus ambiental y sólo después se abre nada.
+        // Al revés, entre abrir la sesión y suspender cabe una ráfaga que
+        // entraría como uso del dueño.
+        ambiental.suspender()
+        tramoId = tramos.abrir(
+            participantId = plan.seudonimo,
+            // NO es el dueño: es la marca que hace que `ExclusionEtiquetada`
+            // descarte del entrenamiento cualquier muestra ambiental que se
+            // hubiera colado durante la visita.
+            isOwner = false,
+            note = "sesion controlada, visita ${plan.visita}"
+        )
 
         semilla = semillaDe()
         sesionId = sesiones.abrir(participanteId, dispositivoReal, semilla, bateria())
@@ -176,19 +235,23 @@ class JuegoViewModel(
             idiomas = selector.idiomasDeSesion(plan.visita)
         )
 
-        for (fase in guion) {
-            if (fase is FaseDeSesion.Fin) break
-            entrar(fase)
-            val r = reloj!!
-            while (!r.terminado) {
-                delay(TIC_MS)
-                publicar(fase)
+        try {
+            for (fase in guion) {
+                if (fase is FaseDeSesion.Fin) break
+                entrar(fase)
+                val r = reloj!!
+                while (!r.terminado) {
+                    delay(TIC_MS)
+                    publicar(fase)
+                }
+                salir(fase)
+                if (abortada) break
             }
-            salir(fase)
-            if (abortada) break
+            cerrar()
+        } finally {
+            // Pase lo que pase. Ver la nota de `devolverElTelefono`.
+            withContext(NonCancellable) { devolverElTelefono() }
         }
-
-        cerrar()
     }
 
     private suspend fun entrar(fase: FaseDeSesion) {
@@ -202,6 +265,12 @@ class JuegoViewModel(
                 indiceBloque = fase.indice,
                 yaVistos = vistos
             )
+            // Los sensores arrancan ANTES que el cronómetro: encenderlos tarda
+            // unas decenas de milisegundos y hacerlo después dejaría el
+            // principio del bloque sin muestras inerciales, justo donde está la
+            // primera pulsación.
+            captura = capturaDe().also { it.iniciar(bloqueId) }
+
             // El reloj arranca DESPUÉS de elegir los párrafos: cargarlos podría
             // costar unos milisegundos y se los comería el tiempo del bloque.
             reloj!!.iniciar()
@@ -224,6 +293,12 @@ class JuegoViewModel(
             // La aclimatación no deja rastro en la base. Es su razón de ser.
             return
         }
+
+        // Los sensores se paran ANTES de escribir el bloque: `detener` vacía lo
+        // que quede en la cola, y hacerlo después dejaría muestras entrando en
+        // un bloque ya cerrado.
+        val resumenCaptura = captura?.detener()
+        captura = null
 
         val m = motor ?: return
         val eventos = m.cerrar()
@@ -254,9 +329,36 @@ class JuegoViewModel(
             ppm = e.ppm,
             precision = e.precision,
             interrumpido = r.interrumpido,
-            motivo = r.motivoInterrupcion
+            motivo = r.motivoInterrupcion,
+            muestrasInerciales = resumenCaptura?.filasEscritas ?: 0L,
+            perdidasEnCola = resumenCaptura?.perdidasEnCola ?: 0L,
+            magnetometro = resumenCaptura?.magnetometroDisponible ?: false
         )
         motor = null
+    }
+
+    /**
+     * Devuelve el teléfono a su estado normal.
+     *
+     * VA EN UN `finally`: si la visita revienta a mitad —una excepción al
+     * escribir, la app que se va al fondo— la recolección ambiental tiene que
+     * volver igualmente. Dejarla suspendida sería peor que no haberla
+     * suspendido: el dueño dejaría de recoger datos indefinidamente y sin
+     * ningún aviso, porque la suspensión no sobrevive a un reinicio del proceso
+     * pero sí a que se cierre la pantalla del estudio.
+     *
+     * Los sensores se paran aquí también por si el fallo cayó dentro de un
+     * bloque: un `IFuenteSensor` sin detener sigue consumiendo bateria, que es
+     * variable dependiente del estudio.
+     */
+    private suspend fun devolverElTelefono() {
+        runCatching { captura?.detener() }
+        captura = null
+        if (tramoId > 0L) {
+            runCatching { tramos.cerrar(tramoId, ahora()) }
+            tramoId = 0L
+        }
+        ambiental.reanudar()
     }
 
     private suspend fun cerrar() {

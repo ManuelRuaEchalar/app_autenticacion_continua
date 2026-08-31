@@ -8,12 +8,18 @@ import com.example.autenticacioncontinua.data.local.entity.controlada.EventoTecl
 import com.example.autenticacioncontinua.data.local.entity.controlada.MuestraInercialEntity
 import com.example.autenticacioncontinua.data.local.entity.controlada.ParticipanteEntity
 import com.example.autenticacioncontinua.data.local.entity.controlada.SesionControladaEntity
+import com.example.autenticacioncontinua.data.controlada.IdentidadDelDispositivo
+import com.example.autenticacioncontinua.domain.model.LabeledSession
 import com.example.autenticacioncontinua.domain.model.controlada.Participante
 import com.example.autenticacioncontinua.domain.model.controlada.PlanDeDispositivos
+import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.domain.repository.IParticipanteRepository
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
 import com.example.autenticacioncontinua.domain.repository.PlanDeSesion
 import com.example.autenticacioncontinua.domain.repository.ResultadoAlta
+import com.example.autenticacioncontinua.domain.session.ISessionManager
+import com.example.autenticacioncontinua.domain.session.LabeledCaptureFase
+import com.example.autenticacioncontinua.domain.session.SessionState
 
 /**
  * Dobles en memoria de los dos repositorios del corpus controlado.
@@ -65,6 +71,99 @@ class ParticipantesEnMemoria : IParticipanteRepository {
 
     private companion object {
         val PATRON = Regex("^[A-Z0-9_-]{2,16}$")
+    }
+}
+
+/**
+ * Identidad del terminal en memoria.
+ *
+ * La de verdad guarda en `SharedPreferences`, que necesita un `Context`. Este
+ * doble además VALIDA la etiqueta igual que la real: si aceptara cualquier
+ * cadena, una prueba podría fijar `"C"` y pasar, y en el aparato reventaría.
+ */
+class IdentidadFalsa(inicial: String = IdentidadDelDispositivo.SIN_ASIGNAR) :
+    IdentidadDelDispositivo {
+
+    override var etiqueta: String = inicial
+        set(valor) {
+            require(valor in IdentidadDelDispositivo.ETIQUETAS_VALIDAS) {
+                "etiqueta '$valor' invalida"
+            }
+            field = valor
+        }
+}
+
+/**
+ * Doble de la recolección ambiental.
+ *
+ * Sólo le interesan a las pruebas del estudio dos cosas: que se suspenda antes
+ * de abrir nada y que se reanude pase lo que pase. Se cuentan las llamadas para
+ * poder afirmar también que no se suspende dos veces ni se reanuda sin haber
+ * suspendido.
+ */
+class AmbientalEnMemoria : ISessionManager {
+
+    var suspensiones = 0
+        private set
+    var reanudaciones = 0
+        private set
+
+    override var estaSuspendido: Boolean = false
+        private set
+
+    override fun suspender() {
+        if (estaSuspendido) return
+        estaSuspendido = true
+        suspensiones++
+    }
+
+    override fun reanudar() {
+        if (!estaSuspendido) return
+        estaSuspendido = false
+        reanudaciones++
+    }
+
+    override fun onDeviceUnlocked() = Unit
+    override fun onScreenOff() = Unit
+    override fun startMonitoring() = Unit
+    override fun stopMonitoring() = Unit
+    override fun getState() = SessionState.IDLE
+    override fun getCooldownRemainingMinutes() = 0
+    override suspend fun startLabeledCapture(
+        participantId: String,
+        isOwner: Boolean,
+        note: String,
+        onFase: (LabeledCaptureFase) -> Unit
+    ) = false
+    override fun cancelLabeledCapture() = Unit
+}
+
+/** Doble de los tramos etiquetados: los tirantes de la suspensión. */
+class TramosEnMemoria : ILabeledSessionRepository {
+
+    val tramos = mutableListOf<LabeledSession>()
+    private var siguienteId = 1L
+
+    override suspend fun abrir(participantId: String, isOwner: Boolean, note: String): Long {
+        val id = siguienteId++
+        tramos += LabeledSession(
+            id = id, participantId = participantId, startMs = 0L, endMs = 0L,
+            isOwner = isOwner, note = note
+        )
+        return id
+    }
+
+    override suspend fun cerrar(id: Long, endMs: Long) {
+        val i = tramos.indexOfFirst { it.id == id }
+        if (i >= 0) tramos[i] = tramos[i].copy(endMs = endMs)
+    }
+
+    override suspend fun todas(): List<LabeledSession> = tramos.toList()
+    override suspend fun desde(desdeMs: Long): List<LabeledSession> =
+        tramos.filter { it.startMs >= desdeMs }
+
+    override suspend fun borrar(id: Long) {
+        tramos.removeAll { it.id == id }
     }
 }
 
@@ -197,9 +296,23 @@ class SesionesEnMemoria : ISesionControladaRepository {
     override suspend fun eventosDe(bloqueId: Long): List<EventoTecleoEntity> =
         eventos.filter { it.bloqueId == bloqueId }
 
-    override suspend fun guardarMuestras(muestras: List<MuestraInercialEntity>) = Unit
+    /**
+     * Las muestras inerciales se guardan de verdad.
+     *
+     * Era un no-op hasta la fase 8, cuando el minijuego empezó a capturarlas: un
+     * doble que las tirara dejaría pasar una prueba que en el aparato daría
+     * `muestras_inerciales` vacía, que es exactamente el estado del que se venía.
+     */
+    val muestras = mutableListOf<MuestraInercialEntity>()
+
+    override suspend fun guardarMuestras(muestras: List<MuestraInercialEntity>) {
+        this.muestras += muestras
+    }
+
+    override suspend fun muestrasDe(bloqueId: Long): List<MuestraInercialEntity> =
+        muestras.filter { it.bloqueId == bloqueId }
+
     override suspend fun guardarCovariables(filas: List<CovariableSesionEntity>) = Unit
-    override suspend fun muestrasDe(bloqueId: Long): List<MuestraInercialEntity> = emptyList()
     override suspend fun tasaEfectivaHz(bloqueId: Long): Double? = null
     override suspend fun cuantasMuestras(bloqueId: Long) = 0
 }
