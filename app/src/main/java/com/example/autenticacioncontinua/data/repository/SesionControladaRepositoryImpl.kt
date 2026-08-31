@@ -149,6 +149,14 @@ class SesionControladaRepositoryImpl(
     override suspend fun bloquesDe(sesionId: Long): List<BloqueEntity> =
         withContext(Dispatchers.IO) { db.bloqueDao().de(sesionId) }
 
+    override suspend fun parrafosVistosPor(participanteId: Long): Set<String> =
+        withContext(Dispatchers.IO) {
+            db.bloqueDao().parrafosUsadosPor(participanteId)
+                .flatMap { it.split(',') }
+                .mapNotNull { it.trim().ifEmpty { null } }
+                .toSet()
+        }
+
     // --- datos ---------------------------------------------------------
 
     /**

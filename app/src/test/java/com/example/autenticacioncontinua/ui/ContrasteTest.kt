@@ -129,6 +129,44 @@ class ContrasteTest {
         exigir(ColoresClaros.error, ColoresClaros.fondo, 4.5, "error sobre fondo")
     }
 
+    /**
+     * Las letras del teclado, sobre los tres fondos que puede tener una tecla.
+     *
+     * Es el texto que el participante mira mientras teclea durante toda la
+     * sesión, y lo hace de reojo: si una tecla pulsada o una de función deja de
+     * leerse, la tarea cambia sin que nada falle.
+     */
+    @Test
+    fun `el rotulo de las teclas cumple AA sobre los tres fondos de tecla`() {
+        val c = ColoresClaros
+        exigir(c.textoPrimario, c.superficie, 4.5, "letra sobre tecla normal")
+        exigir(c.textoPrimario, c.teclaFuncion, 4.5, "simbolo sobre tecla de funcion")
+        exigir(c.textoPrimario, c.hover, 4.5, "letra sobre tecla pulsada")
+    }
+
+    /**
+     * Y las teclas tienen que distinguirse del fondo del teclado.
+     *
+     * NO se les aplica el 3:1 de WCAG: ese mínimo es para elementos cuya forma
+     * no basta para identificarlos, y una tecla se identifica por su rótulo, su
+     * rectángulo redondeado y su separación. Los teclados del sistema —el de
+     * MIUI incluido— usan exactamente esta diferencia pequeña. Lo que sí hay que
+     * garantizar es que la diferencia EXISTA: si el fondo del teclado y la tecla
+     * acabaran iguales, la cuadrícula desaparecería.
+     */
+    @Test
+    fun `las teclas se distinguen del fondo del teclado`() {
+        val c = ColoresClaros
+        assertTrue(
+            "la tecla normal y el fondo del teclado son indistinguibles",
+            contraste(c.superficie, c.teclaFondo) > 1.15
+        )
+        assertTrue(
+            "la tecla de funcion no se distingue del fondo del teclado",
+            contraste(c.teclaFuncion, c.teclaFondo) > 1.05
+        )
+    }
+
     // ------------------------------------------------------------------
     // Elementos no textuales: 3:1
     // ------------------------------------------------------------------

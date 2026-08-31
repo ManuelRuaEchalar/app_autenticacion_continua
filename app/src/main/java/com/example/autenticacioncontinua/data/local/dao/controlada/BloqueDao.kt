@@ -19,6 +19,34 @@ interface BloqueDao {
     @Query("SELECT * FROM bloques WHERE id = :id")
     suspend fun porId(id: Long): BloqueEntity?
 
+    /**
+     * Párrafos que este participante ya ha transcrito, en TODAS sus visitas.
+     *
+     * Es lo que permite cumplir la regla 2.6 del plan: un participante no repite
+     * párrafo entre sus propias sesiones. Sin esta consulta la unicidad sería
+     * sólo intra-sesión, y a partir de la segunda visita la selección volvería a
+     * ofrecer textos ya vistos — un texto conocido se teclea distinto que uno
+     * nuevo, así que la familiaridad con el material quedaría confundida con el
+     * número de sesión.
+     *
+     * Devuelve la columna cruda, con los identificadores separados por coma tal
+     * y como los escribe `cerrarBloque`; el repositorio la despieza. Se filtran
+     * las cadenas vacías en SQL para no traer filas que no aportan nada: en un
+     * participante con diez visitas son treinta filas, pero las vacías serían
+     * ruido puro.
+     *
+     * NOTA: la unicidad es POR PARTICIPANTE y no global, y es deliberado. Dos
+     * personas distintas sí pueden ver el mismo texto, y conviene que lo vean:
+     * si cada una transcribiera textos distintos, la dificultad del texto
+     * quedaría confundida con la persona.
+     */
+    @Query(
+        "SELECT b.parrafosUsados FROM bloques b " +
+            "JOIN sesiones_controladas s ON s.id = b.sesionId " +
+            "WHERE s.participanteId = :participanteId AND b.parrafosUsados != ''"
+    )
+    suspend fun parrafosUsadosPor(participanteId: Long): List<String>
+
     @Query(
         "UPDATE bloques SET finMs = :finMs, pulsaciones = :pulsaciones, errores = :errores, " +
             "borrados = :borrados, ppm = :ppm, precision = :precision, " +

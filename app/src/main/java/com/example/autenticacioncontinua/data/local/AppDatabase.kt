@@ -55,7 +55,7 @@ import com.example.autenticacioncontinua.data.local.entity.TrainingRunEntity
         EventoTecleoEntity::class,
         CovariableSesionEntity::class
     ],
-    version = 10,
+    version = 11,
     // Se exporta a `app/schemas`. Es lo que permite contrastar el SQL de las
     // migraciones con el esquema real sin un telefono delante.
     exportSchema = true
@@ -288,6 +288,65 @@ abstract class AppDatabase : RoomDatabase() {
                 "ADD COLUMN `valida` INTEGER NOT NULL DEFAULT 0"
         )
 
+        /**
+         * 10 -> 11: se ELIMINAN las covariables de `participantes`.
+         *
+         * Desaparecen `tramoEdad`, `sexo`, `lateralidad`, `competenciaLatin` y
+         * `notas`. Quedan sólo `id`, `seudonimo` y `fechaAltaMs`. La razón está
+         * en la nota de [ParticipanteEntity]: con 20-30 participantes esos
+         * campos juntos reidentifican a casi cualquiera, y la única forma de que
+         * un dato no se filtre es que no exista.
+         *
+         * ES LA PRIMERA MIGRACIÓN NO ADITIVA DEL PROYECTO, y por eso hay que
+         * justificar por qué se permite aquí lo que el resto tiene prohibido.
+         * SQLite no soporta `DROP COLUMN` antes de la 3.35 —el terminal del
+         * estudio va con Android 13, es decir SQLite 3.32— así que la única vía
+         * es recrear la tabla y copiar. Eso reescribe la tabla entera, que es
+         * exactamente lo que `EsquemaDeMigracionTest` prohíbe... para las tablas
+         * de campo. `participantes` tiene una fila por persona del estudio:
+         * decenas, no millones. La prohibición sigue en pie donde importa, y la
+         * prueba la mantiene comprobando que esta excepción no toca ninguna otra
+         * tabla.
+         *
+         * LAS CLAVES AJENAS SON LA PRECONDICIÓN, Y ESTÁ MEDIDA.
+         * `sesiones_controladas.participanteId` apunta a `participantes(id)` con
+         * borrado en cascada, y `DROP TABLE` hace un DELETE implícito de todas
+         * las filas antes de borrar la tabla: con las claves ajenas ACTIVAS, esa
+         * cascada se lleva por delante las sesiones, los bloques y los eventos de
+         * tecleo. No es una hipótesis — `EsquemaDeMigracionTest` lo comprueba en
+         * los dos sentidos, y la prueba que lo demuestra se llama
+         * `con las claves ajenas activas la recreacion arrastraria las sesiones`.
+         *
+         * Funciona porque Room desactiva `foreign_keys` mientras corre las
+         * migraciones y las reactiva al abrir; los `id` se copian tal cual, de
+         * modo que al terminar todas las referencias siguen siendo válidas y
+         * `PRAGMA foreign_key_check` sale limpio.
+         *
+         * POR ESO ESTA MIGRACIÓN SE APLICA ANTES DE EMPEZAR EL CAMPO, con
+         * `participantes` prácticamente vacía. Un cambio así con veinte
+         * participantes y sus diez visitas dentro exige exportar antes.
+         *
+         * El índice único de `seudonimo` se recrea explícitamente: se fue con la
+         * tabla vieja, y sin él dos altas del mismo participante volverían a
+         * poder partirlo en dos identidades.
+         */
+        internal val SQL_10_11: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `participantes_nueva` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`seudonimo` TEXT NOT NULL, " +
+                "`fechaAltaMs` INTEGER NOT NULL)",
+
+            "INSERT INTO `participantes_nueva` (`id`, `seudonimo`, `fechaAltaMs`) " +
+                "SELECT `id`, `seudonimo`, `fechaAltaMs` FROM `participantes`",
+
+            "DROP TABLE `participantes`",
+
+            "ALTER TABLE `participantes_nueva` RENAME TO `participantes`",
+
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_participantes_seudonimo` ON `participantes` (`seudonimo`)"
+        )
+
         /** Ver la nota de [SQL_7_8]. */
         internal val SQL_8_9: List<String> = listOf(
             "CREATE TABLE IF NOT EXISTS `participantes` (" +
@@ -481,6 +540,13 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 SQL_9_10.forEach(db::execSQL)
+            }
+        }
+
+        /** Ver la nota de [SQL_10_11]. */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_10_11.forEach(db::execSQL)
             }
         }
     }

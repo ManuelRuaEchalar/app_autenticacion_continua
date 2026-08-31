@@ -13,14 +13,7 @@ class ParticipanteRepositoryImpl(
     private val db: AppDatabase
 ) : IParticipanteRepository {
 
-    override suspend fun alta(
-        seudonimo: String,
-        tramoEdad: String,
-        sexo: String,
-        lateralidad: String,
-        competenciaLatin: String,
-        notas: String
-    ): ResultadoAlta = withContext(Dispatchers.IO) {
+    override suspend fun alta(seudonimo: String): ResultadoAlta = withContext(Dispatchers.IO) {
         val canonico = ParticipanteEntity.normalizar(seudonimo)
         validar(canonico)?.let { return@withContext ResultadoAlta.SeudonimoInvalido(it) }
 
@@ -33,12 +26,7 @@ class ParticipanteRepositoryImpl(
 
         val entidad = ParticipanteEntity(
             seudonimo = canonico,
-            fechaAltaMs = System.currentTimeMillis(),
-            tramoEdad = tramoEdad,
-            sexo = sexo,
-            lateralidad = lateralidad,
-            competenciaLatin = competenciaLatin,
-            notas = notas.trim()
+            fechaAltaMs = System.currentTimeMillis()
         )
         try {
             val id = db.participanteDao().insertar(entidad)
@@ -100,10 +88,5 @@ private fun ParticipanteEntity.aDominio(sesionesHechas: Int = 0) = Participante(
     id = id,
     seudonimo = seudonimo,
     fechaAltaMs = fechaAltaMs,
-    tramoEdad = tramoEdad,
-    sexo = sexo,
-    lateralidad = lateralidad,
-    competenciaLatin = competenciaLatin,
-    notas = notas,
     sesionesHechas = sesionesHechas
 )

@@ -31,14 +31,7 @@ class ParticipantesEnMemoria : IParticipanteRepository {
     /** Sesiones utilizables por participante, para el recuento. */
     val sesionesPorParticipante = mutableMapOf<Long, Int>()
 
-    override suspend fun alta(
-        seudonimo: String,
-        tramoEdad: String,
-        sexo: String,
-        lateralidad: String,
-        competenciaLatin: String,
-        notas: String
-    ): ResultadoAlta {
+    override suspend fun alta(seudonimo: String): ResultadoAlta {
         val canonico = ParticipanteEntity.normalizar(seudonimo)
         if (canonico.isEmpty() || !PATRON.matches(canonico)) {
             return ResultadoAlta.SeudonimoInvalido(
@@ -48,16 +41,7 @@ class ParticipantesEnMemoria : IParticipanteRepository {
         filas.firstOrNull { it.seudonimo == canonico }?.let {
             return ResultadoAlta.SeudonimoDuplicado(it)
         }
-        val p = Participante(
-            id = siguienteId++,
-            seudonimo = canonico,
-            fechaAltaMs = 0L,
-            tramoEdad = tramoEdad,
-            sexo = sexo,
-            lateralidad = lateralidad,
-            competenciaLatin = competenciaLatin,
-            notas = notas.trim()
-        )
+        val p = Participante(id = siguienteId++, seudonimo = canonico, fechaAltaMs = 0L)
         filas += p
         return ResultadoAlta.Creado(p)
     }
@@ -153,19 +137,69 @@ class SesionesEnMemoria : ISesionControladaRepository {
     override suspend fun sesionesDe(participanteId: Long) =
         sesiones.filter { it.participanteId == participanteId }.sortedByDescending { it.inicioMs }
 
-    override suspend fun abrirBloque(sesionId: Long, indice: Int, idioma: String) = 0L
+    // --- bloques y eventos -------------------------------------------
+    //
+    // Se guardan de verdad, no se tiran. Las pruebas del minijuego comprueban
+    // que la aclimatación NO deja fila y que cada bloque queda con su idioma y
+    // su marca de interrumpido; con un doble que ignorara las escrituras, esas
+    // pruebas pasarían con cualquier implementación.
+
+    val bloques = mutableListOf<BloqueEntity>()
+    val eventos = mutableListOf<EventoTecleoEntity>()
+    private var siguienteBloque = 1L
+
+    override suspend fun abrirBloque(sesionId: Long, indice: Int, idioma: String): Long {
+        require(idioma == BloqueEntity.IDIOMA_ESPANOL || idioma == BloqueEntity.IDIOMA_LATIN) {
+            "idioma '$idioma' desconocido"
+        }
+        val id = siguienteBloque++
+        bloques += BloqueEntity(
+            id = id, sesionId = sesionId, indice = indice, inicioMs = 0L, idioma = idioma
+        )
+        return id
+    }
+
     override suspend fun cerrarBloque(
         bloqueId: Long, pulsaciones: Int, errores: Int, borrados: Int,
         ppm: Float, precision: Float, parrafosUsados: List<String>,
         interrumpido: Boolean, motivoInterrupcion: String
-    ) = Unit
+    ) {
+        val i = bloques.indexOfFirst { it.id == bloqueId }
+        if (i < 0) return
+        bloques[i] = bloques[i].copy(
+            finMs = 1L,
+            pulsaciones = pulsaciones,
+            errores = errores,
+            borrados = borrados,
+            ppm = ppm,
+            precision = precision,
+            parrafosUsados = parrafosUsados.joinToString(","),
+            interrumpido = interrumpido,
+            motivoInterrupcion = motivoInterrupcion
+        )
+    }
 
-    override suspend fun bloquesDe(sesionId: Long): List<BloqueEntity> = emptyList()
+    override suspend fun bloquesDe(sesionId: Long): List<BloqueEntity> =
+        bloques.filter { it.sesionId == sesionId }.sortedBy { it.indice }
+
+    override suspend fun parrafosVistosPor(participanteId: Long): Set<String> {
+        val suyas = sesiones.filter { it.participanteId == participanteId }.map { it.id }.toSet()
+        return bloques.filter { it.sesionId in suyas }
+            .flatMap { it.parrafosUsados.split(',') }
+            .mapNotNull { it.trim().ifEmpty { null } }
+            .toSet()
+    }
+
+    override suspend fun guardarEventos(eventos: List<EventoTecleoEntity>) {
+        this.eventos += eventos
+    }
+
+    override suspend fun eventosDe(bloqueId: Long): List<EventoTecleoEntity> =
+        eventos.filter { it.bloqueId == bloqueId }
+
     override suspend fun guardarMuestras(muestras: List<MuestraInercialEntity>) = Unit
-    override suspend fun guardarEventos(eventos: List<EventoTecleoEntity>) = Unit
     override suspend fun guardarCovariables(filas: List<CovariableSesionEntity>) = Unit
     override suspend fun muestrasDe(bloqueId: Long): List<MuestraInercialEntity> = emptyList()
-    override suspend fun eventosDe(bloqueId: Long): List<EventoTecleoEntity> = emptyList()
     override suspend fun tasaEfectivaHz(bloqueId: Long): Double? = null
     override suspend fun cuantasMuestras(bloqueId: Long) = 0
 }

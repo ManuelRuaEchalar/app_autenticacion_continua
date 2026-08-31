@@ -24,14 +24,14 @@ sealed interface ResultadoAlta {
  */
 interface IParticipanteRepository {
 
-    suspend fun alta(
-        seudonimo: String,
-        tramoEdad: String,
-        sexo: String,
-        lateralidad: String,
-        competenciaLatin: String,
-        notas: String = ""
-    ): ResultadoAlta
+    /**
+     * Da de alta a un participante. El seudónimo es lo ÚNICO que se pide.
+     *
+     * No hay tramo de edad, sexo, lateralidad ni competencia en latín: se
+     * eliminaron el 30/08, de la tabla y no sólo del formulario. Ver la nota de
+     * [com.example.autenticacioncontinua.data.local.entity.controlada.ParticipanteEntity].
+     */
+    suspend fun alta(seudonimo: String): ResultadoAlta
 
     /** Todos, con su recuento de sesiones utilizables. */
     suspend fun todos(): List<Participante>

@@ -14,11 +14,6 @@ data class Participante(
     val id: Long,
     val seudonimo: String,
     val fechaAltaMs: Long,
-    val tramoEdad: String,
-    val sexo: String,
-    val lateralidad: String,
-    val competenciaLatin: String,
-    val notas: String,
     /** Sesiones utilizables que lleva. Lo rellena el repositorio al listar. */
     val sesionesHechas: Int = 0
 ) {

@@ -64,7 +64,7 @@ class CorpusControladoTest {
 
     @Test
     fun altaDeParticipanteYRecuperacion() = runBlocking {
-        val r = participantes.alta("P01", "25-34", "f", "diestra", "ninguna")
+        val r = participantes.alta("P01")
         assertTrue(r is ResultadoAlta.Creado)
 
         val p = participantes.porSeudonimo("p01")   // se normaliza
@@ -80,20 +80,24 @@ class CorpusControladoTest {
      */
     @Test
     fun seudonimoDuplicadoSeRechazaYDevuelveElExistente() = runBlocking {
-        participantes.alta("P01", "25-34", "f", "diestra", "ninguna")
-        val segunda = participantes.alta("  p01 ", "35-44", "m", "zurda", "alta")
+        participantes.alta("P01")
+        val segunda = participantes.alta("  p01 ")
 
         assertTrue(segunda is ResultadoAlta.SeudonimoDuplicado)
         assertEquals("P01", (segunda as ResultadoAlta.SeudonimoDuplicado).existente.seudonimo)
         assertEquals(1, db.participanteDao().cuantos())
-        // Y el existente NO se ha modificado con los datos del alta repetida.
-        assertEquals("25-34", participantes.porSeudonimo("P01")!!.tramoEdad)
+        // Y es EL MISMO registro, no uno rehecho: conserva su id, que es lo que
+        // enlaza sus sesiones anteriores.
+        assertEquals(
+            (segunda as ResultadoAlta.SeudonimoDuplicado).existente.id,
+            participantes.porSeudonimo("P01")!!.id
+        )
     }
 
     @Test
     fun seudonimoInvalidoSeRechaza() = runBlocking {
         for (malo in listOf("", " ", "P", "participante con espacios", "P".repeat(20))) {
-            val r = participantes.alta(malo, "25-34", "f", "diestra", "ninguna")
+            val r = participantes.alta(malo)
             assertTrue("'$malo' deberia rechazarse", r is ResultadoAlta.SeudonimoInvalido)
         }
         assertEquals(0, db.participanteDao().cuantos())
@@ -251,14 +255,7 @@ class CorpusControladoTest {
 
     private suspend fun crearParticipante(seudonimo: String): Long {
         db.participanteDao().insertar(
-            ParticipanteEntity(
-                seudonimo = seudonimo,
-                fechaAltaMs = 0L,
-                tramoEdad = "25-34",
-                sexo = "f",
-                lateralidad = "diestra",
-                competenciaLatin = "ninguna"
-            )
+            ParticipanteEntity(seudonimo = seudonimo, fechaAltaMs = 0L)
         )
         return db.participanteDao().porSeudonimo(seudonimo)!!.id
     }

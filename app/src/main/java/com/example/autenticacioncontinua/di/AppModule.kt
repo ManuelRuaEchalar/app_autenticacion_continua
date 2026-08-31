@@ -32,9 +32,11 @@ import com.example.autenticacioncontinua.domain.sensor.IGyroscopeSensor
 import com.example.autenticacioncontinua.domain.sensor.TipoSensor
 import com.example.autenticacioncontinua.domain.session.ISessionManager
 import com.example.autenticacioncontinua.domain.session.SessionManagerImpl
+import com.example.autenticacioncontinua.monitoring.IBatteryMonitor
 import com.example.autenticacioncontinua.presentation.FederatedViewModel
 import com.example.autenticacioncontinua.presentation.LabeledCaptureViewModel
 import com.example.autenticacioncontinua.presentation.MainViewModel
+import com.example.autenticacioncontinua.presentation.controlada.JuegoViewModel
 import com.example.autenticacioncontinua.presentation.controlada.ParticipantesViewModel
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
@@ -50,8 +52,17 @@ import com.example.autenticacioncontinua.data.export.DataExportServiceImpl
  * Sube cuando cambia algo que afecta a la comparabilidad de los datos: la tasa
  * de muestreo, la duracion del bloque, el numero de bloques, el reparto de
  * idiomas. Un arreglo de interfaz sube la version de la app y NO esta.
+ *
+ *   1.0  (23/08)  aclimatacion 60 s, tres bloques de 5 min, descansos de 60 s.
+ *   1.1  (30/08)  aclimatacion 10 s, tres bloques de 100 s, SIN descansos. La
+ *                 visita baja de ~18 min a ~5 min por viabilidad de campo. Se
+ *                 conservan los tres bloques, el reparto 2 espanol + 1 latin y
+ *                 la rotacion del latin. Ver BloqueEntity.DURACION_MS y
+ *                 FaseDeSesion. Las sesiones de la 1.0 y la 1.1 NO son
+ *                 comparables en tasas por bloque; la columna esta justamente
+ *                 para poder separarlas en el analisis.
  */
-const val VERSION_PROTOCOLO = "1.0"
+const val VERSION_PROTOCOLO = "1.1"
 
 /**
  * 100 Hz para el estudio controlado, frente a los 50 Hz de la recogida
@@ -83,7 +94,8 @@ val appModule = module {
             AppDatabase.MIGRATION_6_7,
             AppDatabase.MIGRATION_7_8,
             AppDatabase.MIGRATION_8_9,
-            AppDatabase.MIGRATION_9_10
+            AppDatabase.MIGRATION_9_10,
+            AppDatabase.MIGRATION_10_11
         ).build()
     }
 
@@ -170,6 +182,22 @@ val appModule = module {
             participantes = get(),
             sesiones = get(),
             dispositivoId = get<IdentidadDelDispositivo>().etiqueta
+        )
+    }
+
+    // El minijuego. `ahora` y `bateria` se inyectan como funciones para que la
+    // visita entera se pueda simular en la JVM con el reloj virtual de
+    // `runTest`: es el mismo patron que MonitorBloque y ProtocoloDeBloques.
+    //
+    // La bateria es la de SesionControladaEntity, es decir una COVARIABLE de
+    // sesion, no la medida de consumo: para eso esta `mediciones_recursos`, que
+    // integra la corriente. El porcentaje solo sirve para comprobar que las
+    // sesiones no se agruparon en un extremo de la curva de descarga.
+    viewModel {
+        JuegoViewModel(
+            sesiones = get(),
+            selector = get(),
+            bateria = { get<IBatteryMonitor>().getCurrentLevel().takeIf { it >= 0f } }
         )
     }
 }

@@ -2,7 +2,6 @@ package com.example.autenticacioncontinua.presentation.controlada
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.autenticacioncontinua.data.local.entity.controlada.ParticipanteEntity
 import com.example.autenticacioncontinua.domain.model.controlada.Participante
 import com.example.autenticacioncontinua.domain.repository.IParticipanteRepository
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
@@ -23,7 +22,17 @@ data class EstadoParticipantes(
     /** Error de alta, para enseñarlo junto al campo. Se limpia al escribir. */
     val error: String? = null,
     /** Aviso no bloqueante: p. ej. el participante ya existía. */
-    val aviso: String? = null
+    val aviso: String? = null,
+    /**
+     * Participante para el que se ha pedido el borrado, y cuántas sesiones se
+     * llevaría por delante.
+     *
+     * El recuento va en el estado, y no lo calcula la pantalla, porque es lo que
+     * hace que la confirmación diga algo: «se borrarán 3 sesiones» es una
+     * decisión informada; «¿seguro?» no lo es.
+     */
+    val borrando: Participante? = null,
+    val sesionesQueSeBorrarian: Int = 0
 ) {
     /**
      * La condición que la pantalla siguiente comprueba.
@@ -107,18 +116,9 @@ class ParticipantesViewModel(
      * Encadenar las dos cosas es lo que espera quien está delante: se da de
      * alta a alguien porque va a hacer una sesión ahora mismo.
      */
-    fun alta(
-        seudonimo: String,
-        tramoEdad: String,
-        sexo: String,
-        lateralidad: String,
-        competenciaLatin: String,
-        notas: String = ""
-    ) {
+    fun alta(seudonimo: String) {
         viewModelScope.launch {
-            when (val r = participantes.alta(
-                seudonimo, tramoEdad, sexo, lateralidad, competenciaLatin, notas
-            )) {
+            when (val r = participantes.alta(seudonimo)) {
                 is ResultadoAlta.Creado -> {
                     _estado.value = _estado.value.copy(error = null, aviso = null)
                     cargar()
@@ -146,18 +146,50 @@ class ParticipantesViewModel(
         _estado.value = _estado.value.copy(error = null, aviso = null)
     }
 
+    // ------------------------------------------------------------------
+    // Borrado
+    // ------------------------------------------------------------------
+
+    /**
+     * Pide confirmación para borrar, contando antes lo que se va a perder.
+     *
+     * BORRAR ES PARA DESHACER UN ALTA EQUIVOCADA, no para limpiar lo que salió
+     * mal: una sesión que salió mal se INVALIDA con su motivo y se conserva. El
+     * borrado arrastra en cascada las sesiones, los bloques y los eventos de
+     * tecleo del participante, así que la confirmación tiene que decir cuántos
+     * son — si no, es un «¿seguro?» que nadie lee.
+     */
+    fun pedirBorrado(p: Participante) {
+        viewModelScope.launch {
+            val n = sesiones.sesionesDe(p.id).size
+            _estado.value = _estado.value.copy(borrando = p, sesionesQueSeBorrarian = n)
+        }
+    }
+
+    fun cancelarBorrado() {
+        _estado.value = _estado.value.copy(borrando = null, sesionesQueSeBorrarian = 0)
+    }
+
+    fun confirmarBorrado() {
+        val p = _estado.value.borrando ?: return
+        viewModelScope.launch {
+            participantes.borrar(p.id)
+            _estado.value = _estado.value.copy(
+                borrando = null,
+                sesionesQueSeBorrarian = 0,
+                seleccionado = null,
+                plan = null,
+                aviso = "${p.seudonimo} y sus datos se han borrado."
+            )
+            cargar()
+        }
+    }
+
     /** Historial del participante seleccionado, para la pantalla de detalle. */
     suspend fun historial(participanteId: Long) = sesiones.sesionesDe(participanteId)
 
     private suspend fun planificar(p: Participante) {
         val plan = sesiones.planificar(p.id, dispositivoId)
         _estado.value = _estado.value.copy(plan = plan)
-    }
-
-    companion object {
-        val TRAMOS_EDAD = ParticipanteEntity.TRAMOS_EDAD
-        val SEXOS = ParticipanteEntity.SEXOS
-        val LATERALIDADES = ParticipanteEntity.LATERALIDADES
-        val COMPETENCIAS_LATIN = ParticipanteEntity.COMPETENCIAS_LATIN
     }
 }

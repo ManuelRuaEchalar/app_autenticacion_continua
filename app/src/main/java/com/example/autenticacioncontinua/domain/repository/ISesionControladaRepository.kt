@@ -91,6 +91,16 @@ interface ISesionControladaRepository {
 
     suspend fun bloquesDe(sesionId: Long): List<BloqueEntity>
 
+    /**
+     * Párrafos que el participante ya ha transcrito en cualquiera de sus visitas.
+     *
+     * Lo consume `SelectorDeParrafos.parrafosPara` para no repetirle un texto.
+     * La regla es POR PARTICIPANTE, nunca global: dos personas distintas sí
+     * pueden —y conviene que lo hagan— transcribir el mismo texto, o la
+     * dificultad del material quedaría confundida con la persona.
+     */
+    suspend fun parrafosVistosPor(participanteId: Long): Set<String>
+
     // --- datos ---------------------------------------------------------
 
     suspend fun guardarMuestras(muestras: List<MuestraInercialEntity>)

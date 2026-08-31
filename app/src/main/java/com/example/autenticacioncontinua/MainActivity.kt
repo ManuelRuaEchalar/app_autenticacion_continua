@@ -59,8 +59,11 @@ import com.example.autenticacioncontinua.domain.session.SessionState
 import com.example.autenticacioncontinua.presentation.MainViewModel
 import com.example.autenticacioncontinua.presentation.FederatedViewModel
 import com.example.autenticacioncontinua.presentation.UiState
+import com.example.autenticacioncontinua.presentation.controlada.JuegoViewModel
+import com.example.autenticacioncontinua.ui.controlada.EstudioControlado
 import com.example.autenticacioncontinua.service.DataCollectionService
 import org.koin.androidx.compose.koinViewModel
+import org.koin.androidx.viewmodel.ext.android.viewModel
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
@@ -92,11 +95,40 @@ private val AppColorScheme = darkColorScheme(
     onPrimary = DarkBg
 )
 
+/** Las tres pantallas de la aplicación. */
+private enum class Destino { PRINCIPAL, CAPTURA, ESTUDIO }
+
 class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _: Boolean -> }
+
+    /**
+     * El ViewModel del minijuego, para poder avisarle de que la visita se ha
+     * cortado.
+     *
+     * Es la MISMA instancia que usa la pantalla: `koinViewModel()` dentro de un
+     * `@Composable` resuelve contra el `ViewModelStore` de esta Activity.
+     */
+    private val juegoViewModel: JuegoViewModel by viewModel()
+
+    /**
+     * La aplicación deja de estar delante: llamada entrante, botón de inicio,
+     * pantalla apagada.
+     *
+     * Nadie está tecleando, así que el bloque en curso se marca como
+     * interrumpido y la visita se cierra como ABORTADA, conservando los bloques
+     * que sí se completaron. Va en `onStop` y no en `onPause` a propósito:
+     * `onPause` se dispara también con un diálogo del sistema por encima —un
+     * aviso de batería baja, por ejemplo— y eso no justifica tirar una visita.
+     *
+     * Si el estudio no está abierto, no hace nada.
+     */
+    override fun onStop() {
+        super.onStop()
+        juegoViewModel.onPausa("la aplicacion paso a segundo plano")
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,14 +155,28 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Sin librería de navegación: son dos pantallas y una de
-                    // ellas sólo la abre el investigador. Un NavHost aquí sería
+                    // Sin librería de navegación: son tres pantallas y dos de
+                    // ellas sólo las abre el investigador. Un NavHost aquí sería
                     // más andamiaje que función.
-                    val (enCaptura, setEnCaptura) = remember { mutableStateOf(false) }
-                    if (enCaptura) {
-                        LabeledCaptureScreen(onClose = { setEnCaptura(false) })
-                    } else {
-                        MainScreen(onAbrirCaptura = { setEnCaptura(true) })
+                    //
+                    // El estudio controlado trae su PROPIO tema —claro y fijo,
+                    // ver AutenticacionContinuaTheme— y por eso se dibuja fuera
+                    // del MaterialTheme oscuro de la herramienta de recolección:
+                    // el modo de color se fija por protocolo, igual que el
+                    // brillo, porque en panel OLED afecta al consumo, que es
+                    // variable dependiente del estudio.
+                    val (destino, setDestino) = remember { mutableStateOf(Destino.PRINCIPAL) }
+                    when (destino) {
+                        Destino.PRINCIPAL -> MainScreen(
+                            onAbrirCaptura = { setDestino(Destino.CAPTURA) },
+                            onAbrirEstudio = { setDestino(Destino.ESTUDIO) }
+                        )
+
+                        Destino.CAPTURA ->
+                            LabeledCaptureScreen(onClose = { setDestino(Destino.PRINCIPAL) })
+
+                        Destino.ESTUDIO ->
+                            EstudioControlado(onSalir = { setDestino(Destino.PRINCIPAL) })
                     }
                 }
             }
@@ -145,6 +191,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     onAbrirCaptura: () -> Unit = {},
+    onAbrirEstudio: () -> Unit = {},
     viewModel: MainViewModel = koinViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -292,6 +339,22 @@ fun MainScreen(
                 )
             ) {
                 Text("🧪  Captura etiquetada", color = AccentOrange, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Entrada al estudio controlado. Va aquí, junto a la captura etiquetada,
+        // porque las dos son herramientas del investigador y no del
+        // participante: quien usa el teléfono a diario no abre ninguna.
+        item {
+            androidx.compose.material3.Button(
+                onClick = onAbrirEstudio,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isExporting,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = CardBg
+                )
+            ) {
+                Text("⌨️  Sesion controlada", color = AccentCyan, fontWeight = FontWeight.Bold)
             }
         }
 

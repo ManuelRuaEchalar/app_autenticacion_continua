@@ -82,8 +82,29 @@ data class BloqueEntity(
         const val IDIOMA_ESPANOL = "es"
         const val IDIOMA_LATIN = "la"
 
-        /** Cinco minutos. El bloque termina aquí, corte donde corte el texto. */
-        const val DURACION_MS = 5 * 60 * 1000L
+        /**
+         * Cien segundos. El bloque termina aquí, corte donde corte el texto.
+         *
+         * BAJADO DESDE LOS CINCO MINUTOS DEL PLAN (decisión del 30/08). La
+         * visita pasa de unos dieciocho minutos a poco más de cinco: tres
+         * bloques de 100 s más diez segundos de aclimatación, sin descansos. El
+         * motivo es de viabilidad, no de método — diez visitas por participante
+         * a dieciocho minutos son tres horas por persona, y con veinte personas,
+         * sesenta horas de laboratorio.
+         *
+         * LO QUE NO CAMBIA es que la duración sea FIJA, que es lo que sostiene
+         * la comparación: si el bloque terminara al acabar el párrafo, quien
+         * teclea rápido aportaría menos datos que quien teclea despacio y la
+         * cantidad de señal quedaría correlacionada con la persona.
+         *
+         * CONSECUENCIA QUE HAY QUE DECLARAR: a 100 s el bloque ya no sirve como
+         * ventana de medición de recursos. `MonitorBloque` sigue recomendando
+         * cinco minutos y NO se toca, porque su restricción viene del sujeto
+         * medido —radio, recolector de basura, gobernador de frecuencia— y no
+         * del protocolo de tecleo. Las corridas de consumo se hacen aparte, como
+         * ya preveía la fase 0.
+         */
+        const val DURACION_MS = 100_000L
 
         const val BLOQUES_POR_SESION = 3
     }

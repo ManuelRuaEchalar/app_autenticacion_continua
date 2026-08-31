@@ -63,7 +63,26 @@ data class ColoresApp(
      */
     val acentoTexto: Color,
     /** Sólo para el carácter fallado del teleprompter y los estados de error. */
-    val error: Color
+    val error: Color,
+
+    /**
+     * Fondo del teclado del minijuego.
+     *
+     * Más oscuro que las teclas para que éstas se lean como teclas sin
+     * necesidad de bordes ni sombras, que es como lo resuelven los teclados de
+     * Android. Ver [teclaFuncion].
+     */
+    val teclaFondo: Color,
+
+    /**
+     * Fondo de las teclas que no escriben un carácter: hoy sólo el retroceso.
+     *
+     * Los teclados del sistema las tiñen para distinguirlas de las letras de un
+     * vistazo, y el teclado del estudio lo copia: cuanto más se parezca al que
+     * el participante usa a diario, menos mide el estudio la sorpresa de un
+     * teclado desconocido.
+     */
+    val teclaFuncion: Color
 )
 
 /**
@@ -101,7 +120,14 @@ val ColoresClaros = ColoresApp(
     // Rojo oscurecido respecto al habitual (#D93025) para llegar a 4.5:1 sobre
     // blanco: el carácter fallado del teleprompter es texto que hay que leer,
     // no un adorno.
-    error = Color(0xFFC5221F)
+    error = Color(0xFFC5221F),
+    // Grises del teclado, tomados de la disposición clara por defecto de los
+    // teclados de Android. NO se copia el tema del teléfono que se usó para
+    // medirlo —ese tenía un tema personalizado color melocotón—: el aspecto del
+    // teclado tiene que ser IDÉNTICO en los dos terminales del estudio, y un
+    // tema elegido por el dueño del móvil es justo una variable sin controlar.
+    teclaFondo = Color(0xFFE3E3E5),
+    teclaFuncion = Color(0xFFD0D0D3)
 )
 
 /**

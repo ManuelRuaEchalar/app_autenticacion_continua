@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
@@ -32,6 +33,9 @@ import com.example.autenticacioncontinua.ui.componentes.Tarjeta
 import com.example.autenticacioncontinua.ui.componentes.TituloDeSeccion
 import com.example.autenticacioncontinua.ui.theme.Tema
 import com.example.autenticacioncontinua.ui.theme.Tipos
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Pantalla P2 del plan: lista de participantes con buscador, alta y selección.
@@ -45,9 +49,12 @@ fun PantallaParticipantes(
     estado: EstadoParticipantes,
     onFiltrar: (String) -> Unit,
     onSeleccionar: (Participante) -> Unit,
-    onAlta: (String, String, String, String, String) -> Unit,
+    onAlta: (String) -> Unit,
     onLimpiarMensajes: () -> Unit,
-    onContinuar: () -> Unit
+    onContinuar: () -> Unit,
+    onPedirBorrado: (Participante) -> Unit,
+    onCancelarBorrado: () -> Unit,
+    onConfirmarBorrado: () -> Unit
 ) {
     var mostrandoAlta by remember { mutableStateOf(false) }
 
@@ -67,8 +74,8 @@ fun PantallaParticipantes(
         if (mostrandoAlta) {
             FormularioDeAlta(
                 onCancelar = { mostrandoAlta = false },
-                onAceptar = { s, edad, sexo, lat, latin ->
-                    onAlta(s, edad, sexo, lat, latin)
+                onAceptar = { s ->
+                    onAlta(s)
                     mostrandoAlta = false
                 }
             )
@@ -133,19 +140,88 @@ fun PantallaParticipantes(
                         color = if (plan.dispositivoNoEsElEsperado) Tema.colores.acentoTexto
                         else Tema.colores.textoSecundario
                     )
+
+                    // Borrar vive AQUÍ, dentro de la ficha del seleccionado, y
+                    // no como icono en cada fila de la lista: así hay que elegir
+                    // a alguien antes de poder borrarlo, y no se puede destruir
+                    // a un participante rozando la lista al desplazarla.
+                    Spacer(Modifier.height(Tema.espaciado.medio))
+                    BotonSecundario(
+                        "Borrar participante",
+                        onClick = {
+                            estado.seleccionado?.let(onPedirBorrado)
+                        }
+                    )
                 }
             }
         }
 
         Spacer(Modifier.height(Tema.espaciado.seccion))
     }
+
+    estado.borrando?.let { p ->
+        DialogoDeBorrado(
+            seudonimo = p.seudonimo,
+            sesiones = estado.sesionesQueSeBorrarian,
+            onCancelar = onCancelarBorrado,
+            onConfirmar = onConfirmarBorrado
+        )
+    }
 }
 
+/**
+ * Confirmación de borrado.
+ *
+ * DICE LO QUE SE PIERDE, con el número delante. Borrar arrastra en cascada las
+ * sesiones, los bloques y los eventos de tecleo del participante, y un diálogo
+ * que sólo pregunta «¿seguro?» se contesta que sí sin leerlo.
+ *
+ * Y recuerda la alternativa: una sesión que salió mal se INVALIDA con su motivo
+ * y se conserva. Borrar es para deshacer un alta equivocada, no para limpiar lo
+ * que no gustó.
+ */
+@Composable
+private fun DialogoDeBorrado(
+    seudonimo: String,
+    sesiones: Int,
+    onCancelar: () -> Unit,
+    onConfirmar: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onCancelar,
+        containerColor = Tema.colores.superficie,
+        titleContentColor = Tema.colores.textoPrimario,
+        textContentColor = Tema.colores.textoSecundario,
+        title = { Text("Borrar $seudonimo") },
+        text = {
+            Text(
+                if (sesiones == 0) {
+                    "No tiene ninguna sesion registrada. Se borrara solo el alta."
+                } else {
+                    "Se borraran tambien sus $sesiones sesiones, con sus bloques y " +
+                        "todas sus pulsaciones. No se puede deshacer.\n\n" +
+                        "Si lo que salio mal es una sesion, invalidala en vez de " +
+                        "borrar al participante: una sesion invalidada se conserva " +
+                        "con su motivo."
+                },
+                fontSize = Tipos.cuerpo
+            )
+        },
+        confirmButton = { BotonPrimario("Borrar", onClick = onConfirmar) },
+        dismissButton = { BotonSecundario("Cancelar", onClick = onCancelar) }
+    )
+}
+
+/**
+ * Lo que se enseña bajo el seudónimo en la lista.
+ *
+ * Antes eran las covariables (edad, sexo, lateralidad); ya no existen. Queda la
+ * fecha de alta, que no es un dato de la persona sino del registro y sirve para
+ * distinguir dos seudónimos parecidos y para casarlos con el cuaderno de campo.
+ */
 private fun descripcion(p: Participante): String =
-    listOf(p.tramoEdad, p.sexo, p.lateralidad)
-        .filter { it != "ns" }
-        .joinToString(" · ")
-        .ifBlank { "sin datos" }
+    if (p.fechaAltaMs <= 0L) "sin fecha de alta"
+    else "alta " + SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(p.fechaAltaMs))
 
 @Composable
 private fun Buscador(valor: String, onCambio: (String) -> Unit) {
@@ -180,22 +256,21 @@ private fun Aviso(texto: String, esError: Boolean) {
 }
 
 /**
- * Alta de participante.
+ * Alta de participante: SÓLO el seudónimo.
  *
- * Las covariables se piden por TRAMOS y no exactas —edad en franjas, no en
- * años— porque con 20-30 personas una edad exacta más el sexo y la lateralidad
- * reidentifican a casi cualquiera, y el teléfono se presta a desconocidos.
+ * No se pide edad, sexo, lateralidad ni competencia en latín (decisión del
+ * 30/08). No es que no se enseñen: no existen en la base. Con 20-30
+ * participantes esos campos juntos reidentifican a casi cualquiera, y el
+ * teléfono se presta a desconocidos; la única forma de que un dato no se filtre
+ * es que no esté. Lo que haga falta para describir la muestra va al cuaderno de
+ * campo en papel, junto a la correspondencia persona ↔ seudónimo.
  */
 @Composable
 private fun FormularioDeAlta(
     onCancelar: () -> Unit,
-    onAceptar: (String, String, String, String, String) -> Unit
+    onAceptar: (String) -> Unit
 ) {
     var seudonimo by remember { mutableStateOf("") }
-    var edad by remember { mutableStateOf(ParticipantesViewModel.TRAMOS_EDAD.first()) }
-    var sexo by remember { mutableStateOf(ParticipantesViewModel.SEXOS.first()) }
-    var lateralidad by remember { mutableStateOf(ParticipantesViewModel.LATERALIDADES.first()) }
-    var latin by remember { mutableStateOf(ParticipantesViewModel.COMPETENCIAS_LATIN.first()) }
 
     Tarjeta {
         Column {
@@ -224,20 +299,18 @@ private fun FormularioDeAlta(
                 )
             )
 
-            SelectorDeOpcion("Edad", ParticipantesViewModel.TRAMOS_EDAD, edad) { edad = it }
-            SelectorDeOpcion("Sexo", ParticipantesViewModel.SEXOS, sexo) { sexo = it }
-            SelectorDeOpcion(
-                "Lateralidad", ParticipantesViewModel.LATERALIDADES, lateralidad
-            ) { lateralidad = it }
-            SelectorDeOpcion(
-                "Latín", ParticipantesViewModel.COMPETENCIAS_LATIN, latin
-            ) { latin = it }
+            Spacer(Modifier.height(Tema.espaciado.pequeno))
+            Text(
+                "No se guarda ningun otro dato de la persona.",
+                fontSize = Tipos.menor,
+                color = Tema.colores.textoTerciario
+            )
 
             Spacer(Modifier.height(Tema.espaciado.medio))
             Row {
                 BotonPrimario(
                     "Dar de alta",
-                    onClick = { onAceptar(seudonimo, edad, sexo, lateralidad, latin) },
+                    onClick = { onAceptar(seudonimo) },
                     habilitado = seudonimo.isNotBlank()
                 )
                 Spacer(Modifier.width(Tema.espaciado.pequeno))
@@ -247,31 +320,6 @@ private fun FormularioDeAlta(
     }
 }
 
-/**
- * Opciones en fila en vez de un desplegable.
- *
- * Son listas de tres a seis valores fijos: un desplegable añade un toque y una
- * animación por cada uno, y el alta se hace con el participante esperando.
- */
-@Composable
-private fun SelectorDeOpcion(
-    etiqueta: String,
-    opciones: List<String>,
-    seleccionada: String,
-    onElegir: (String) -> Unit
-) {
-    Column(Modifier.padding(top = Tema.espaciado.medio)) {
-        Text(etiqueta, fontSize = Tipos.menor, color = Tema.colores.textoTerciario)
-        Spacer(Modifier.height(Tema.espaciado.minimo))
-        Row {
-            for (o in opciones) {
-                if (o == seleccionada) {
-                    BotonPrimario(o, onClick = { onElegir(o) })
-                } else {
-                    BotonSecundario(o, onClick = { onElegir(o) })
-                }
-                Spacer(Modifier.width(Tema.espaciado.minimo))
-            }
-        }
-    }
-}
+// `SelectorDeOpcion` se eliminó con las covariables (30/08): era el selector en
+// fila de edad, sexo, lateralidad y latín, y ya no hay nada que seleccionar en el
+// alta. Si vuelve a hacer falta un selector de opciones, va a ui/componentes.
