@@ -9,6 +9,7 @@ import com.example.autenticacioncontinua.domain.juego.FaseDeSesion
 import com.example.autenticacioncontinua.domain.juego.GuionDeSesion
 import com.example.autenticacioncontinua.domain.juego.MotorBloque
 import com.example.autenticacioncontinua.domain.juego.RelojBloque
+import com.example.autenticacioncontinua.domain.export.IExportadorDeSesion
 import com.example.autenticacioncontinua.domain.repository.ILabeledSessionRepository
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
 import com.example.autenticacioncontinua.domain.session.ISessionManager
@@ -61,10 +62,42 @@ data class EstadoJuego(
     val resumen: List<ResumenBloque> = emptyList(),
     /** Se rellena al cerrar la sesión. */
     val estadoFinal: EstadoSesion? = null,
-    val error: String? = null
+    val error: String? = null,
+    /**
+     * Cómo va el guardado del paquete de la visita (R5, fase 9).
+     *
+     * VIVE EN EL ESTADO Y NO EN LA VISTA porque de él depende si se puede salir
+     * de la pantalla, y eso es una regla del protocolo, no de la interfaz: una
+     * visita que se cierra sin exportar deja su única copia dentro del teléfono.
+     */
+    val exportacion: EstadoExportacion = EstadoExportacion.Pendiente
 ) {
     val enBloque: Boolean get() = fase is FaseDeSesion.Bloque
     val terminada: Boolean get() = fase is FaseDeSesion.Fin
+
+    /** R5: no se sale de la visita hasta que el paquete está escrito y verificado. */
+    val puedeSalir: Boolean get() = exportacion is EstadoExportacion.Hecha
+}
+
+/** Las cuatro situaciones del guardado, que la pantalla tiene que saber distinguir. */
+sealed interface EstadoExportacion {
+    data object Pendiente : EstadoExportacion
+    data object EnCurso : EstadoExportacion
+
+    /**
+     * Escrito y RELEÍDO. No basta con haberlo escrito: el paquete se vuelve a
+     * abrir y se comprueban las huellas de sus cuatro tablas antes de dar la
+     * visita por guardada. Escribir un fichero corrupto y decir que todo fue
+     * bien es exactamente el fallo que esta fase existe para evitar.
+     */
+    data class Hecha(
+        val nombre: String,
+        val huellaCorta: String,
+        val kb: Long,
+        val filas: Map<String, Int>
+    ) : EstadoExportacion
+
+    data class Fallida(val motivo: String) : EstadoExportacion
 }
 
 /**
@@ -139,6 +172,8 @@ class JuegoViewModel(
      * independientes para el mismo fallo, que es silencioso y caro.
      */
     private val tramos: ILabeledSessionRepository,
+    /** Paquete de la visita (R5). Ver [exportar]. */
+    private val exportador: IExportadorDeSesion,
     private val ahora: () -> Long = { System.currentTimeMillis() },
     private val bateria: () -> Float? = { null },
     private val semillaDe: () -> Long = { Random.nextLong() }
@@ -380,6 +415,58 @@ class JuegoViewModel(
             resumen = resumen.toList(),
             estadoFinal = estadoFinal
         )
+
+        // La exportación va DESPUÉS de cerrar y no dentro del cierre: si
+        // fallara, la sesión ya está cerrada y sus datos a salvo en la base. Al
+        // revés —exportar y luego cerrar— un fallo de disco dejaría la sesión
+        // abierta y la siguiente visita la heredaría.
+        exportar()
+    }
+
+    /**
+     * Escribe el paquete de la visita y lo vuelve a leer para comprobarlo.
+     *
+     * SE LANZA SOLO al terminar, sin que nadie pulse nada. R5 pide que exportar
+     * sea obligatorio, y la forma de que algo obligatorio se cumpla siempre es
+     * que no dependa de que alguien se acuerde: al llegar a la pantalla de
+     * resumen el guardado ya está en marcha, y el botón de salir no se habilita
+     * hasta que termina.
+     *
+     * ES REINTENTABLE. Un fallo aquí no pierde nada —los datos siguen en la
+     * base— pero deja la visita sin copia, así que la pantalla ofrece repetir.
+     */
+    fun exportar() {
+        if (sesionId == 0L) return
+        if (_estado.value.exportacion is EstadoExportacion.EnCurso) return
+        _estado.value = _estado.value.copy(exportacion = EstadoExportacion.EnCurso)
+        viewModelScope.launch {
+            val resultado = exportador.exportar(sesionId).mapCatching { paquete ->
+                // Releer lo escrito. Es la mitad de la prueba que pide la fase 9
+                // y lo que separa "se escribió un fichero" de "hay una copia".
+                val v = exportador.verificar(paquete.fichero).getOrThrow()
+                check(v.integro) {
+                    "el paquete se escribió pero no se relee bien: " +
+                        "${v.tablasCorruptas.joinToString()} corrupta(s)"
+                }
+                check(v.huella == paquete.huella) {
+                    "la huella del fichero cambió entre escribirlo y releerlo"
+                }
+                paquete
+            }
+            _estado.value = _estado.value.copy(
+                exportacion = resultado.fold(
+                    onSuccess = {
+                        EstadoExportacion.Hecha(
+                            nombre = it.fichero.name,
+                            huellaCorta = it.huellaCorta,
+                            kb = it.bytes / 1024,
+                            filas = it.filasPorTabla
+                        )
+                    },
+                    onFailure = { EstadoExportacion.Fallida(it.message ?: "error desconocido") }
+                )
+            )
+        }
     }
 
     /**

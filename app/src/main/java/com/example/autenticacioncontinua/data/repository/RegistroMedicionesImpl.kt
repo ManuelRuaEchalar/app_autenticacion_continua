@@ -6,6 +6,7 @@ import com.example.autenticacioncontinua.data.local.entity.MedicionLatenciaEntit
 import com.example.autenticacioncontinua.data.local.entity.MedicionRecursosEntity
 import com.example.autenticacioncontinua.domain.repository.IRegistroMediciones
 import com.example.autenticacioncontinua.monitoring.EstadisticaLatencia
+import com.example.autenticacioncontinua.monitoring.EstadoPantalla
 import com.example.autenticacioncontinua.monitoring.MetodoConsumo
 import com.example.autenticacioncontinua.monitoring.ResumenRecursos
 import kotlinx.coroutines.Dispatchers
@@ -36,11 +37,14 @@ class RegistroMedicionesImpl(
     override suspend fun registrarLatencia(
         estadistica: EstadisticaLatencia,
         configSensores: String,
-        regimenAprendizaje: String
+        regimenAprendizaje: String,
+        estadoPantalla: EstadoPantalla
     ): Long? = withContext(Dispatchers.IO) {
         runCatching {
             db.medicionLatenciaDao().insertar(
-                MedicionLatenciaEntity.desde(estadistica, configSensores, regimenAprendizaje)
+                MedicionLatenciaEntity.desde(
+                    estadistica, configSensores, regimenAprendizaje, estadoPantalla
+                )
             )
         }.onFailure {
             Log.w(TAG, "no se pudo guardar la latencia '${estadistica.etiqueta}'", it)

@@ -3,7 +3,9 @@ package com.example.autenticacioncontinua.data.sensor
 import android.util.Log
 import com.example.autenticacioncontinua.data.local.entity.controlada.MuestraInercialEntity
 import com.example.autenticacioncontinua.domain.repository.ISesionControladaRepository
+import com.example.autenticacioncontinua.domain.sensor.ConfiguracionSensores
 import com.example.autenticacioncontinua.domain.sensor.IFuenteSensor
+import com.example.autenticacioncontinua.domain.sensor.ProveedorDeConfiguracion
 import com.example.autenticacioncontinua.domain.sensor.TipoSensor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +52,20 @@ class CapturaInercial(
     private val giroscopio: IFuenteSensor,
     private val magnetometro: IFuenteSensor,
     private val repositorio: ISesionControladaRepository,
+    /**
+     * Qué configuración de sensores está activa.
+     *
+     * Decide QUÉ SE REGISTRA, que es lo que de verdad separa un nivel del
+     * diseño de otro en el eje de recursos: el coste eléctrico de un sensor lo
+     * paga el aparato mientras está encendido, se procesen sus datos o no.
+     * Filtrar los canales después de haberlos capturado mediría siempre el
+     * coste de la configuración más rica.
+     *
+     * Por defecto, la configuración desplegada, para que las pruebas y la
+     * recogida ambiental no tengan que enterarse.
+     */
+    private val configuracion: ProveedorDeConfiguracion =
+        ProveedorDeConfiguracion { ConfiguracionSensores.POR_DEFECTO },
     private val alcance: CoroutineScope = CoroutineScope(Dispatchers.IO)
 ) {
 
@@ -67,6 +83,21 @@ class CapturaInercial(
      */
     private var trabajoColector: Job? = null
     private var trabajoEscritor: Job? = null
+
+    /**
+     * Las fuentes que ESTA captura arrancó de verdad.
+     *
+     * POR QUÉ SE RECUERDAN EN VEZ DE RECALCULARLAS AL PARAR. Porque la
+     * configuración activa puede cambiar entre el arranque y la parada —es
+     * estado de protocolo y el investigador la conmuta entre bloques—, y
+     * entonces `fuentes()` devolvería un conjunto distinto del que se registró.
+     * Los sensores que sobraran quedarían REGISTRADOS EN EL SENSOR MANAGER
+     * después de detener la captura: sin nadie consumiendo su flujo, pero
+     * despertando el aparato y gastando la batería que este módulo existe para
+     * medir. Y no fallaría nada: la captura terminaría bien y el resumen
+     * saldría correcto.
+     */
+    private var fuentesArrancadas: List<IFuenteSensor> = emptyList()
     private var alineador: AlineadorInercial? = null
     private var cola: Channel<MuestraInercialEntity>? = null
 
@@ -89,13 +120,14 @@ class CapturaInercial(
         escritas = 0
         perdidas = 0
 
-        for (f in fuentes()) f.iniciar()
+        fuentesArrancadas = fuentes()
+        for (f in fuentesArrancadas) f.iniciar()
 
         // Un solo consumidor de las tres corrientes: el alineador NO es seguro
         // entre hilos y no hace falta que lo sea si todo lo que le llega pasa
         // por aquí.
         trabajoColector = alcance.launch {
-            merge(acelerometro.flujo(), giroscopio.flujo(), magnetometro.flujo())
+            merge(*fuentesArrancadas.map { it.flujo() }.toTypedArray())
                 .collect { muestra ->
                     ali.aceptar(muestra)?.let { fila ->
                         val ok = ch.trySend(fila).isSuccess
@@ -105,6 +137,8 @@ class CapturaInercial(
         }
         trabajoEscritor = alcance.launch { vaciar(ch) }
         Log.i(TAG, "captura iniciada en el bloque $bloqueId; " +
+            "config=${configuracion.activa().clave} " +
+            "sensores=${fuentesArrancadas.joinToString { it.tipo.clave }}; " +
             "magnetometro=${magnetometro.disponible}")
     }
 
@@ -129,7 +163,10 @@ class CapturaInercial(
         val ali = alineador ?: return null
         val ch = cola ?: return null
 
-        for (f in fuentes()) f.detener()
+        // Lo ARRANCADO, no lo que pida la configuración ahora. Ver
+        // `fuentesArrancadas`.
+        for (f in fuentesArrancadas) f.detener()
+        fuentesArrancadas = emptyList()
         trabajoColector?.cancel()
         trabajoColector = null
 
@@ -169,7 +206,19 @@ class CapturaInercial(
         }
     }
 
+    /**
+     * Las fuentes que hay que registrar: las que PIDE la configuración activa y
+     * además EXISTEN en este terminal.
+     *
+     * Los dos filtros son distintos y hacen falta los dos. La configuración
+     * dice qué quiere el diseño; la disponibilidad, qué tiene el aparato. Un
+     * móvil sin magnetómetro con la configuración D registra dos sensores en
+     * vez de tres, y eso queda en `magnetometroDisponible` del resumen para que
+     * el análisis pueda excluir ese bloque en lugar de tratarlo como si tuviera
+     * los tres canales.
+     */
     private fun fuentes() = listOf(acelerometro, giroscopio, magnetometro)
+        .filter { configuracion.activa().requiere(it.tipo) }
         .filter { it.disponible }
 
     companion object {

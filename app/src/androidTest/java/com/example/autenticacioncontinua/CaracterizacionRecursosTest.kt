@@ -228,7 +228,14 @@ class CaracterizacionRecursosTest {
     private var acumulador = 0.0
 
     private fun bloque(etiqueta: String, trabajo: () -> Unit) =
-        MonitorBloque(energia, memoria, periodoMuestreoMs = 250).let { monitor ->
+        // `metodoExigido = null` A PROPOSITO: aqui el objeto de estudio es que
+        // metodo sirve en ESTE terminal, y forzar el del estudio taparia la
+        // respuesta. Fue asi como se descubrio, el 06/09, que el contador del
+        // Redmi Note 11 Pro si resuelve un bloque de 20 s bajo carga mientras
+        // el del 23129RA5FL no resuelve nada — que es lo que obligo a fijar el
+        // metodo para el resto del estudio.
+        MonitorBloque(energia, memoria, metodoExigido = null, periodoMuestreoMs = 250)
+            .let { monitor ->
             monitor.iniciar(etiqueta)
             val t0 = System.currentTimeMillis()
             while (System.currentTimeMillis() - t0 < DURACION_BLOQUE_MS) trabajo()

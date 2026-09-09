@@ -17,14 +17,52 @@ interface AccelerometerDao {
     @Query("SELECT * FROM accelerometer_data ORDER BY timestamp ASC")
     suspend fun getAll(): List<AccelerometerEntity>
 
+
+
     /**
-     * Lecturas a partir de un instante. El ventaneo para entrenamiento usa
-     * esta consulta en lugar de [getAll] para acotar la memoria: a 50 Hz, un
-     * histórico de meses no cabe holgadamente en el heap de una app de
-     * usuario junto al intérprete TFLite.
+     * Cuantas lecturas hay a partir de `sinceMs`.
+     *
+     * Sirve para dimensionar de una vez los arrays de `SerieTriaxial` en lugar
+     * de dejarlos duplicar su capacidad seis o siete veces: cada duplicacion
+     * copia el array entero, y con millones de muestras esas copias son el pico
+     * de memoria que hay que evitar.
      */
-    @Query("SELECT * FROM accelerometer_data WHERE timestamp >= :sinceMs ORDER BY timestamp ASC")
-    suspend fun getSince(sinceMs: Long): List<AccelerometerEntity>
+    @Query("SELECT COUNT(*) FROM accelerometer_data WHERE timestamp >= :sinceMs")
+    suspend fun contarDesde(sinceMs: Long): Int
+
+    /**
+     * El siguiente bloque de lecturas a partir de `sinceMs`, en orden.
+     *
+     * PAGINACION POR CLAVE, NO POR `OFFSET`. `LIMIT :limite OFFSET n` obliga a
+     * SQLite a recorrer y descartar las n primeras filas en cada bloque, de
+     * modo que leer la tabla entera por bloques cuesta el cuadrado de leerla
+     * de una vez. Aqui el bloque siguiente se pide diciendo por donde se quedo
+     * el anterior, y con el indice de `timestamp` cada peticion continua el
+     * recorrido donde lo dejo.
+     *
+     * EL DESEMPATE POR `id` ES NECESARIO. Varias muestras comparten
+     * milisegundo: a 50 Hz no, pero las rafagas del sensor llegan agrupadas y
+     * el reloj se repite. Paginando solo por `timestamp` habria que elegir
+     * entre `>` —que se salta el resto de las muestras de ese milisegundo— y
+     * `>=` —que las repite para siempre—. El par (timestamp, id) es unico y no
+     * tiene ninguno de los dos problemas.
+     *
+     * Devuelve una lista vacia cuando ya no queda nada: esa es la condicion de
+     * parada del bucle que lo consume.
+     */
+    @Query(
+        "SELECT * FROM accelerometer_data " +
+            "WHERE timestamp >= :sinceMs " +
+            "AND (timestamp > :ultimoTs OR (timestamp = :ultimoTs AND id > :ultimoId)) " +
+            "ORDER BY timestamp ASC, id ASC " +
+            "LIMIT :limite"
+    )
+    suspend fun getBloqueDesde(
+        sinceMs: Long,
+        ultimoTs: Long,
+        ultimoId: Long,
+        limite: Int
+    ): List<AccelerometerEntity>
 
     /**
      * Borra lo que ya no puede usarse.

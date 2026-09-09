@@ -1,10 +1,25 @@
 package com.example.autenticacioncontinua.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.autenticacioncontinua.domain.model.GyroscopeData
 
-@Entity(tableName = "gyroscope_data")
+/**
+ * Una lectura del sensor.
+ *
+ * EL INDICE POR `timestamp` NO ES UN ADORNO. El ventaneo lee siempre por
+ * ventana temporal (`WHERE timestamp >= :desde ORDER BY timestamp`), y la
+ * purga borra por el mismo criterio. Sin indice, SQLite recorria la tabla
+ * entera y ordenaba el resultado en un b-tree temporal: con 1,4 millones de
+ * filas de dos semanas eso tardaba minutos y, sobre todo, obligaba a
+ * materializar el resultado de golpe. Con indice, la lectura por bloques de
+ * `SerieTriaxial` avanza en orden sin ordenar nada.
+ */
+@Entity(
+    tableName = "gyroscope_data",
+    indices = [Index(value = ["timestamp"])]
+)
 data class GyroscopeEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

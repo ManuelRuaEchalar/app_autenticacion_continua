@@ -1,12 +1,15 @@
 package com.example.autenticacioncontinua.juego
 
 import com.example.autenticacioncontinua.controlada.AmbientalEnMemoria
+import com.example.autenticacioncontinua.controlada.ExportadorFalso
+import com.example.autenticacioncontinua.presentation.controlada.EstadoExportacion
 import com.example.autenticacioncontinua.controlada.FuenteFalsa
 import com.example.autenticacioncontinua.controlada.SesionesEnMemoria
 import com.example.autenticacioncontinua.controlada.TramosEnMemoria
 import com.example.autenticacioncontinua.data.local.entity.controlada.BloqueEntity
 import com.example.autenticacioncontinua.data.local.entity.controlada.EstadoSesion
 import com.example.autenticacioncontinua.data.sensor.CapturaInercial
+import com.example.autenticacioncontinua.domain.sensor.ConfiguracionSensores
 import com.example.autenticacioncontinua.domain.juego.FaseDeSesion
 import com.example.autenticacioncontinua.domain.sensor.TipoSensor
 import com.example.autenticacioncontinua.domain.tecleo.FaseDePulsacion
@@ -52,6 +55,7 @@ class JuegoViewModelTest {
     private lateinit var sesiones: SesionesEnMemoria
     private lateinit var ambiental: AmbientalEnMemoria
     private lateinit var tramos: TramosEnMemoria
+    private lateinit var exportador: ExportadorFalso
     private lateinit var acelerometro: FuenteFalsa
     private lateinit var giroscopio: FuenteFalsa
     private lateinit var magnetometro: FuenteFalsa
@@ -73,6 +77,7 @@ class JuegoViewModelTest {
         sesiones.seudonimoDe[PARTICIPANTE] = "P01"
         ambiental = AmbientalEnMemoria()
         tramos = TramosEnMemoria()
+        exportador = ExportadorFalso()
         acelerometro = FuenteFalsa(TipoSensor.ACELEROMETRO)
         giroscopio = FuenteFalsa(TipoSensor.GIROSCOPIO)
         magnetometro = FuenteFalsa(TipoSensor.MAGNETOMETRO)
@@ -96,11 +101,16 @@ class JuegoViewModelTest {
                 giroscopio = giroscopio,
                 magnetometro = magnetometro,
                 repositorio = sesiones,
+                // Los tres sensores: es lo que comprueba `los sensores se paran
+                // al acabar la visita`, y con la configuración de por defecto el
+                // magnetómetro ni siquiera se registraría.
+                configuracion = { ConfiguracionSensores.D },
                 alcance = this
             ).also { capturas += it }
         },
         ambiental = ambiental,
         tramos = tramos,
+        exportador = exportador,
         // El reloj del dominio y el de las corrutinas son el MISMO. Si fueran
         // distintos, el bloque terminaria cuando lo dijera uno y las duraciones
         // se registrarian segun el otro.
@@ -518,6 +528,94 @@ class JuegoViewModelTest {
 
         advanceUntilIdle()
         assertFalse("y cerrado al terminar", tramos.tramos.single().enCurso)
+    }
+
+    // ------------------------------------------------------------------
+    // Fase 9: la visita no se cierra sin copia (R5)
+    // ------------------------------------------------------------------
+
+    /**
+     * Al terminar, el paquete se escribe SOLO. Nadie tiene que pulsar nada.
+     *
+     * Es la forma de que un requisito obligatorio se cumpla siempre: si
+     * dependiera de un boton, se incumpliria el dia que hay prisa, y ese dia no
+     * se distingue de los demas hasta que meses despues falta una visita.
+     */
+    @Test
+    fun `al terminar la visita se exporta sin que nadie lo pida`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+
+        assertEquals("una exportacion, de esta sesion", 1, exportador.exportadas.size)
+        assertTrue(v.estado.value.exportacion is EstadoExportacion.Hecha)
+    }
+
+    /** Y hasta que no esta escrita y releida, no se sale. */
+    @Test
+    fun `no se puede salir de la visita antes de que la copia este hecha`() = runTest {
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+        assertTrue("con la copia hecha si se sale", v.estado.value.puedeSalir)
+    }
+
+    /**
+     * SI LA EXPORTACION FALLA, LA SESION YA ESTA CERRADA Y LOS DATOS ESTAN.
+     *
+     * Es el orden que importa: exportar va DESPUES de cerrar. Al reves, un
+     * fallo de disco dejaria la sesion abierta y la siguiente visita del mismo
+     * participante la heredaria, mezclando dos dias en un episodio.
+     */
+    @Test
+    fun `si la exportacion falla la sesion queda cerrada y los datos intactos`() = runTest {
+        exportador.falla = true
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+
+        val sesion = sesiones.sesiones.single()
+        assertFalse("la sesion tiene que quedar cerrada igualmente", sesion.estaAbierta)
+        assertEquals(EstadoSesion.COMPLETA.name, sesion.estado)
+        assertEquals("y sus tres bloques siguen ahi", 3, sesiones.bloques.size)
+
+        assertTrue(v.estado.value.exportacion is EstadoExportacion.Fallida)
+        assertFalse("pero NO se deja salir sin copia", v.estado.value.puedeSalir)
+    }
+
+    /** Y se puede reintentar sin repetir la visita. */
+    @Test
+    fun `la exportacion fallida se puede reintentar`() = runTest {
+        exportador.falla = true
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+        assertFalse(v.estado.value.puedeSalir)
+
+        exportador.falla = false
+        v.exportar()
+        advanceUntilIdle()
+
+        assertTrue("ya hay copia", v.estado.value.exportacion is EstadoExportacion.Hecha)
+        assertTrue(v.estado.value.puedeSalir)
+    }
+
+    /**
+     * UN PAQUETE QUE SE ESCRIBE PERO NO SE RELEE BIEN NO CUENTA COMO COPIA.
+     *
+     * Es la diferencia entre "se escribio un fichero" y "hay una copia". Un zip
+     * truncado tiene el nombre correcto y un tamano plausible en el listado; lo
+     * unico que lo delata es volver a abrirlo y comprobar las huellas.
+     */
+    @Test
+    fun `un paquete corrupto no se da por bueno`() = runTest {
+        exportador.corrupto = true
+        val v = vm()
+        v.iniciar(PARTICIPANTE, "A")
+        advanceUntilIdle()
+
+        assertTrue(v.estado.value.exportacion is EstadoExportacion.Fallida)
+        assertFalse("no se sale con una copia que no se relee", v.estado.value.puedeSalir)
     }
 
     /** Cada bloque enciende y apaga los sensores; ninguno se queda vivo. */

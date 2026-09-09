@@ -17,7 +17,6 @@ import com.example.autenticacioncontinua.presentation.controlada.JuegoViewModel
 import com.example.autenticacioncontinua.presentation.controlada.ParticipantesViewModel
 import com.example.autenticacioncontinua.ui.componentes.AreaPrincipal
 import com.example.autenticacioncontinua.ui.componentes.BotonSecundario
-import com.example.autenticacioncontinua.ui.theme.AutenticacionContinuaTheme
 import com.example.autenticacioncontinua.ui.theme.Tema
 import org.koin.androidx.compose.koinViewModel
 
@@ -44,66 +43,71 @@ fun EstudioControlado(
     val estadoJ by juegoVm.estado.collectAsState()
     var jugando by remember { mutableStateOf(false) }
 
-    AutenticacionContinuaTheme {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .background(Tema.colores.fondo)
-        ) {
-            if (jugando) {
-                BackHandler(enabled = true) { /* a mitad de visita no se sale */ }
-                PantallaJuego(
-                    estado = estadoJ,
-                    onPulsacion = juegoVm::onPulsacion,
-                    onTerminar = {
-                        jugando = false
-                        // El recuento de sesiones del participante acaba de
-                        // cambiar; sin recargar, la lista seguiría diciendo el
-                        // número anterior.
-                        participantesVm.cargar()
-                    }
-                )
-            } else if (estadoP.verificando) {
-                // P3. Entre elegir participante y teclear va la lista, y no se
-                // puede saltar: es lo único que separa una visita bien montada
-                // de una que produce datos que parecen buenos y no lo son.
-                BackHandler(enabled = true) { participantesVm.cerrarVerificacion() }
-                PantallaVerificacion(
-                    estado = estadoP,
-                    onAlternar = participantesVm::alternarComprobacion,
-                    onAsignarEtiqueta = participantesVm::asignarEtiqueta,
-                    onVolver = participantesVm::cerrarVerificacion,
-                    onEmpezar = {
-                        val p = estadoP.seleccionado
-                        val plan = estadoP.plan
-                        if (p != null && plan != null) {
-                            participantesVm.cerrarVerificacion()
-                            juegoVm.iniciar(p.id, plan.dispositivoReal)
-                            jugando = true
-                        }
-                    }
-                )
-            } else {
-                BackHandler(enabled = true) { onSalir() }
-                PantallaParticipantes(
-                    estado = estadoP,
-                    onFiltrar = participantesVm::filtrar,
-                    onSeleccionar = participantesVm::seleccionar,
-                    onAlta = participantesVm::alta,
-                    onLimpiarMensajes = participantesVm::limpiarMensajes,
-                    // "Continuar" ya no arranca el minijuego: pasa por la lista
-                    // de verificación. Es el único camino, para que no haya un
-                    // atajo que se acabe usando por prisa.
-                    onContinuar = participantesVm::abrirVerificacion,
-                    onPedirBorrado = participantesVm::pedirBorrado,
-                    onCancelarBorrado = participantesVm::cancelarBorrado,
-                    onConfirmarBorrado = participantesVm::confirmarBorrado
-                )
-                AreaPrincipal {
-                    Spacer(Modifier.height(Tema.espaciado.medio))
-                    BotonSecundario("Volver", onSalir)
-                    Spacer(Modifier.height(Tema.espaciado.grande))
+    // YA NO ENVUELVE UN TEMA PROPIO. Lo traía porque la herramienta de
+    // recolección corría bajo un `MaterialTheme` oscuro y el estudio tenía que
+    // escaparse de él. Desde la migración del 31/08 el tema claro está en la
+    // raíz de la Activity y vale para toda la aplicación, que es lo que el
+    // protocolo pide: el modo de color se fija de una vez, no pantalla por
+    // pantalla. Anidar otro aquí sólo volvería a proveer los mismos valores.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Tema.colores.fondo)
+    ) {
+        if (jugando) {
+            BackHandler(enabled = true) { /* a mitad de visita no se sale */ }
+            PantallaJuego(
+                estado = estadoJ,
+                onPulsacion = juegoVm::onPulsacion,
+                onReintentarExportacion = juegoVm::exportar,
+                onTerminar = {
+                    jugando = false
+                    // El recuento de sesiones del participante acaba de
+                    // cambiar; sin recargar, la lista seguiría diciendo el
+                    // número anterior.
+                    participantesVm.cargar()
                 }
+            )
+        } else if (estadoP.verificando) {
+            // P3. Entre elegir participante y teclear va la lista, y no se
+            // puede saltar: es lo único que separa una visita bien montada
+            // de una que produce datos que parecen buenos y no lo son.
+            BackHandler(enabled = true) { participantesVm.cerrarVerificacion() }
+            PantallaVerificacion(
+                estado = estadoP,
+                onAlternar = participantesVm::alternarComprobacion,
+                onAsignarEtiqueta = participantesVm::asignarEtiqueta,
+                onVolver = participantesVm::cerrarVerificacion,
+                onEmpezar = {
+                    val p = estadoP.seleccionado
+                    val plan = estadoP.plan
+                    if (p != null && plan != null) {
+                        participantesVm.cerrarVerificacion()
+                        juegoVm.iniciar(p.id, plan.dispositivoReal)
+                        jugando = true
+                    }
+                }
+            )
+        } else {
+            BackHandler(enabled = true) { onSalir() }
+            PantallaParticipantes(
+                estado = estadoP,
+                onFiltrar = participantesVm::filtrar,
+                onSeleccionar = participantesVm::seleccionar,
+                onAlta = participantesVm::alta,
+                onLimpiarMensajes = participantesVm::limpiarMensajes,
+                // "Continuar" ya no arranca el minijuego: pasa por la lista
+                // de verificación. Es el único camino, para que no haya un
+                // atajo que se acabe usando por prisa.
+                onContinuar = participantesVm::abrirVerificacion,
+                onPedirBorrado = participantesVm::pedirBorrado,
+                onCancelarBorrado = participantesVm::cancelarBorrado,
+                onConfirmarBorrado = participantesVm::confirmarBorrado
+            )
+            AreaPrincipal {
+                Spacer(Modifier.height(Tema.espaciado.medio))
+                BotonSecundario("Volver", onSalir)
+                Spacer(Modifier.height(Tema.espaciado.grande))
             }
         }
     }

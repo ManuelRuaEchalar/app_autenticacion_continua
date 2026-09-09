@@ -102,7 +102,7 @@ class MedicionEntityTest {
     @Test
     fun `una serie de latencias viaja entera a la fila`() {
         val e = EstadisticaLatencia.desde("inferencia_ventana", listOf(10.0, 11.0, 10.5, 9.5, 500.0))
-        val fila = MedicionLatenciaEntity.desde(e, "acc_gyro", "federado", 999L)
+        val fila = MedicionLatenciaEntity.desde(e, "acc_gyro", "federado", tMs = 999L)
 
         assertEquals("inferencia_ventana", fila.etiqueta)
         assertEquals(5, fila.n)

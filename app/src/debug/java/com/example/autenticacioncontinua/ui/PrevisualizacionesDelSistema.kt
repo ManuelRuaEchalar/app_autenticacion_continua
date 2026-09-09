@@ -16,6 +16,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.autenticacioncontinua.ui.componentes.AreaPrincipal
 import com.example.autenticacioncontinua.ui.componentes.BotonPrimario
 import com.example.autenticacioncontinua.ui.componentes.BotonSecundario
+import com.example.autenticacioncontinua.ui.componentes.CabeceraDeEstado
+import com.example.autenticacioncontinua.ui.componentes.EstadoVisual
+import com.example.autenticacioncontinua.ui.componentes.TarjetaDeAviso
 import com.example.autenticacioncontinua.ui.componentes.DestinoNavegacion
 import com.example.autenticacioncontinua.ui.componentes.EstructuraConLateral
 import com.example.autenticacioncontinua.ui.componentes.FilaDeLista
@@ -75,6 +78,39 @@ private fun MuestrarioDeComponentes() = AutenticacionContinuaTheme {
                 FilaDeLista("P03", apoyo = "sin sesiones", valor = "0 sesiones", onClick = {})
             }
         }
+
+        // Los cuatro estados juntos y en el orden en que se leen. Es la
+        // comprobación que faltaba cuando la herramienta de recolección tenía
+        // paleta propia: aquí se ve de un vistazo si un estado se confunde con
+        // otro, que es lo que `ContrasteTest` mide en números.
+        TituloDeSeccion("Estados")
+        Tarjeta {
+            Column {
+                CabeceraDeEstado(
+                    "Grabando datos IMU", EstadoVisual.EXITO,
+                    detalle = "Capturando giroscopio y acelerómetro a 50 Hz.",
+                    pulsante = true
+                )
+                Spacer(Modifier.height(Tema.espaciado.medio))
+                CabeceraDeEstado(
+                    "Recolección suspendida", EstadoVisual.AVISO,
+                    detalle = "Hay una sesión controlada en curso."
+                )
+                Spacer(Modifier.height(Tema.espaciado.medio))
+                CabeceraDeEstado(
+                    "Protección incompleta", EstadoVisual.ERROR,
+                    detalle = "Falta la exención de batería."
+                )
+                Spacer(Modifier.height(Tema.espaciado.medio))
+                CabeceraDeEstado("En espera", EstadoVisual.NEUTRO)
+            }
+        }
+        Spacer(Modifier.height(Tema.espaciado.pequeno))
+        TarjetaDeAviso(
+            "Sólo 1 sesión de uso distinta. El modelo se evalúa casi con los " +
+                "mismos datos con los que entrenó.",
+            EstadoVisual.AVISO
+        )
 
         TituloDeSeccion("Jerarquía de texto")
         Text("Texto primario", fontSize = Tipos.cuerpo, color = Tema.colores.textoPrimario)

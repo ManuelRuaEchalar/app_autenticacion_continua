@@ -41,6 +41,19 @@ class FuenteEnergiaFalsa(
     override fun estaCargando(): Boolean = cargando
 }
 
+/**
+ * Estado de pantalla falso que recorre una secuencia y se queda en el último.
+ *
+ * La secuencia permite simular lo que en el aparato ocurre de verdad: que el
+ * usuario apague la pantalla a mitad de un bloque de cinco minutos.
+ */
+class FuenteEstadoPantallaFalsa(
+    private val secuencia: List<EstadoPantalla> = listOf(EstadoPantalla.PRIMER_PLANO)
+) : FuenteEstadoPantalla {
+    private var i = 0
+    override fun estado(): EstadoPantalla = secuencia[minOf(i++, secuencia.size - 1)]
+}
+
 /** Memoria falsa que recorre una secuencia de valores y se queda en el último. */
 class FuenteMemoriaFalsa(
     private val secuenciaKb: List<Long> = listOf(150_000L)
@@ -77,10 +90,11 @@ class RegistroEnMemoria : IRegistroMediciones {
     override suspend fun registrarLatencia(
         estadistica: EstadisticaLatencia,
         configSensores: String,
-        regimenAprendizaje: String
+        regimenAprendizaje: String,
+        estadoPantalla: EstadoPantalla
     ): Long? {
         latenciasGuardadas += MedicionLatenciaEntity.desde(
-            estadistica, configSensores, regimenAprendizaje,
+            estadistica, configSensores, regimenAprendizaje, estadoPantalla,
             tMs = latenciasGuardadas.size.toLong()
         )
         return latenciasGuardadas.size.toLong()

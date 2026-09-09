@@ -29,8 +29,12 @@ import com.example.autenticacioncontinua.domain.juego.FaseDeSesion
 import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
 import com.example.autenticacioncontinua.presentation.controlada.EstadoJuego
 import com.example.autenticacioncontinua.presentation.controlada.JuegoViewModel
+import com.example.autenticacioncontinua.presentation.controlada.EstadoExportacion
 import com.example.autenticacioncontinua.presentation.controlada.ResumenBloque
 import com.example.autenticacioncontinua.ui.componentes.AreaPrincipal
+import com.example.autenticacioncontinua.ui.componentes.BotonSecundario
+import com.example.autenticacioncontinua.ui.componentes.CabeceraDeEstado
+import com.example.autenticacioncontinua.ui.componentes.EstadoVisual
 import com.example.autenticacioncontinua.ui.componentes.BotonPrimario
 import com.example.autenticacioncontinua.ui.componentes.FilaDeLista
 import com.example.autenticacioncontinua.ui.componentes.Separador
@@ -58,7 +62,8 @@ import kotlin.math.roundToInt
 fun PantallaJuego(
     estado: EstadoJuego,
     onPulsacion: (PulsacionCruda) -> Unit,
-    onTerminar: () -> Unit
+    onTerminar: () -> Unit,
+    onReintentarExportacion: () -> Unit = {}
 ) {
     Column(
         Modifier
@@ -68,7 +73,7 @@ fun PantallaJuego(
         when {
             estado.error != null -> Aviso(estado.error, onTerminar)
             estado.fase == null -> Aviso("Preparando la sesion...", null)
-            estado.terminada -> Resumen(estado, onTerminar)
+            estado.terminada -> Resumen(estado, onTerminar, onReintentarExportacion)
             else -> EnCurso(estado, onPulsacion)
         }
     }
@@ -244,10 +249,19 @@ private fun reloj(ms: Long): String {
  * interrumpido que no se anota reaparece meses después como un dato raro sin
  * explicación.
  *
- * La exportación obligatoria del plan (R5) es la fase 9; aquí sólo se termina.
+ * NO SE SALE DE AQUÍ SIN HABER GUARDADO (R5, fase 9). El paquete de la visita
+ * se escribe solo al llegar a esta pantalla y el botón de salir está
+ * deshabilitado hasta que se ha escrito Y releído. Es deliberado que no haya un
+ * botón de «exportar»: algo obligatorio que dependa de que alguien lo pulse se
+ * incumple el día que hay prisa, y ese día no se distingue de los demás hasta
+ * que meses después falta una visita.
  */
 @Composable
-private fun Resumen(estado: EstadoJuego, onTerminar: () -> Unit) {
+private fun Resumen(
+    estado: EstadoJuego,
+    onTerminar: () -> Unit,
+    onReintentarExportacion: () -> Unit
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -273,8 +287,68 @@ private fun Resumen(estado: EstadoJuego, onTerminar: () -> Unit) {
             }
 
             Spacer(Modifier.height(Tema.espaciado.grande))
-            BotonPrimario("Terminar", onTerminar, Modifier.fillMaxWidth())
+            EstadoDelGuardado(estado.exportacion, onReintentarExportacion)
+
+            Spacer(Modifier.height(Tema.espaciado.medio))
+            BotonPrimario(
+                texto = if (estado.puedeSalir) "Terminar" else "Guardando la visita…",
+                onClick = onTerminar,
+                modifier = Modifier.fillMaxWidth(),
+                habilitado = estado.puedeSalir
+            )
             Spacer(Modifier.height(Tema.espaciado.grande))
+        }
+    }
+}
+
+/**
+ * Qué ha pasado con el paquete de la visita.
+ *
+ * SE ENSEÑA EL NOMBRE Y LA HUELLA, no un «guardado» a secas. Los dos van al
+ * cuaderno de campo: el nombre para localizar el fichero en la copia por USB, y
+ * los doce primeros dígitos del SHA-256 para poder cotejar en el PC que lo que
+ * llegó es lo que salió. Un mensaje de éxito sin nada que apuntar deja al
+ * investigador sin forma de comprobar la copia después.
+ */
+@Composable
+private fun EstadoDelGuardado(estado: EstadoExportacion, onReintentar: () -> Unit) {
+    when (estado) {
+        is EstadoExportacion.Pendiente, is EstadoExportacion.EnCurso ->
+            CabeceraDeEstado(
+                titulo = "Guardando la visita",
+                estado = EstadoVisual.NEUTRO,
+                detalle = "Escribiendo el paquete y volviendo a leerlo para comprobarlo.",
+                pulsante = true
+            )
+
+        is EstadoExportacion.Hecha -> {
+            CabeceraDeEstado(
+                titulo = "Visita guardada y verificada",
+                estado = EstadoVisual.EXITO,
+                detalle = "${estado.nombre} · ${estado.kb} KB"
+            )
+            Spacer(Modifier.height(Tema.espaciado.pequeno))
+            Text(
+                "SHA-256: ${estado.huellaCorta}…",
+                fontSize = Tipos.menor,
+                color = Tema.colores.textoSecundario
+            )
+            Text(
+                estado.filas.entries.joinToString(" · ") { "${it.key.removeSuffix(".csv")} ${it.value}" },
+                fontSize = Tipos.menor,
+                color = Tema.colores.textoTerciario
+            )
+        }
+
+        is EstadoExportacion.Fallida -> {
+            CabeceraDeEstado(
+                titulo = "No se pudo guardar la visita",
+                estado = EstadoVisual.ERROR,
+                detalle = "${estado.motivo}. Los datos siguen en la base del telefono: " +
+                    "no se ha perdido nada, pero esta visita no tiene copia todavia."
+            )
+            Spacer(Modifier.height(Tema.espaciado.pequeno))
+            BotonSecundario("Reintentar el guardado", onReintentar, Modifier.fillMaxWidth())
         }
     }
 }

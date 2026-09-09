@@ -9,7 +9,19 @@ data class MuestraRecursos(
     val cargaMicroAh: Long?,
     val corrienteMicroA: Long?,
     val pssKb: Long,
-    val cargando: Boolean
+    val cargando: Boolean,
+    /**
+     * Régimen de visibilidad en el instante de la muestra.
+     *
+     * Va POR MUESTRA y no por bloque para poder detectar que el estado cambió a
+     * mitad —el usuario apagó la pantalla mientras corría el bloque—, que es un
+     * caso distinto de "no se pudo leer". Ver [EstadoPantalla.deMuestras].
+     *
+     * El valor por defecto es [EstadoPantalla.DESCONOCIDO] porque una muestra
+     * construida sin él efectivamente tiene el estado sin determinar; no es un
+     * atajo de compatibilidad.
+     */
+    val estadoPantalla: EstadoPantalla = EstadoPantalla.DESCONOCIDO
 )
 
 /**
@@ -39,7 +51,41 @@ enum class MetodoConsumo {
     INTEGRACION_DE_CORRIENTE,
 
     /** Ni contador utilizable ni corriente: no hay cifra de consumo. */
-    NINGUNO
+    NINGUNO;
+
+    companion object {
+        /**
+         * EL METODO QUE USA ESTE ESTUDIO, y no se negocia por bloque.
+         *
+         * POR QUE HAY QUE FIJARLO. Medido el 06/09 en los dos terminales:
+         *
+         *   terminal A (Redmi 23129RA5FL) — el contador avanza en escalones de
+         *     49 370 uAh, el 1% de su bateria. No resuelve nada, asi que cae
+         *     siempre en la integracion de corriente.
+         *   terminal B (Redmi Note 11 Pro) — escalon de ~2 000 uAh, unas 25
+         *     veces mejor. En un bloque de 20 s BAJO CARGA el contador SI se
+         *     movio, de modo que `contadorSirve` sale true y, dejado a su libre
+         *     albedrio, el resumen elegiria CONTADOR_DE_CARGA.
+         *
+         * Es decir: el mismo codigo produciria cifras obtenidas con
+         * INSTRUMENTOS DISTINTOS en cada aparato, y [ResumenRecursos.neto] se
+         * niega —con razon— a restar entre metodos, con lo que la mitad de las
+         * restas del diseno devolverian null. En un estudio cuyo eje principal
+         * es un diseno cruzado persona x dispositivo, eso lo invalida.
+         *
+         * SE ELIGE LA INTEGRACION Y NO EL CONTADOR por tres motivos medidos:
+         *   1. es el unico que funciona en LOS DOS terminales;
+         *   2. es el unico que resuelve el REPOSO —en el terminal B el contador
+         *      no se movio ni una vez en 60 s de reposo— y sin linea base no
+         *      hay consumo neto;
+         *   3. discrimina de sobra: 3.79x entre reposo y carga en el terminal B.
+         *
+         * Y las dos cifras del bloque sostenido de B concuerdan razonablemente
+         * —2 000 uAh por contador frente a 2 281 por integral, un 12%—, lo que
+         * da confianza en que la integral no esta sesgada.
+         */
+        val DEL_ESTUDIO = INTEGRACION_DE_CORRIENTE
+    }
 }
 
 /**
@@ -83,7 +129,18 @@ enum class MotivoInvalidez {
     SIN_CORRIENTE,
 
     /** Menos muestras de las necesarias para que las estadísticas signifiquen algo. */
-    MUESTRAS_INSUFICIENTES
+    MUESTRAS_INSUFICIENTES,
+
+    /**
+     * Se exigió un método de medida concreto y en este bloque no se pudo
+     * obtener.
+     *
+     * INVALIDA. Es distinto de no haber podido medir por ningún método: aquí
+     * puede que la otra vía sí hubiera dado una cifra, y precisamente por eso
+     * no se usa. Aceptarla produciría un número comparable con el de otros
+     * bloques sólo en apariencia.
+     */
+    SIN_METODO_EXIGIDO
 }
 
 /**
@@ -118,6 +175,13 @@ data class ResumenRecursos(
     val pssMaxKb: Long,
     val pssMedioKb: Double,
 
+    /**
+     * Régimen de visibilidad del bloque entero, o [EstadoPantalla.MIXTO] si
+     * cambió mientras se medía. Ver [EstadoPantalla] para por qué es un factor
+     * del diseño y no una anotación.
+     */
+    val estadoPantalla: EstadoPantalla,
+
     val invalidez: Set<MotivoInvalidez>
 ) {
     /**
@@ -145,6 +209,7 @@ data class ResumenRecursos(
     val esValida: Boolean
         get() = MotivoInvalidez.CARGANDO !in invalidez &&
             MotivoInvalidez.MUESTRAS_INSUFICIENTES !in invalidez &&
+            MotivoInvalidez.SIN_METODO_EXIGIDO !in invalidez &&
             metodoConsumo != MetodoConsumo.NINGUNO
 
     val pssMaxMb: Double get() = pssMaxKb / 1024.0
@@ -160,7 +225,21 @@ data class ResumenRecursos(
          * sin corrutinas. Es el único sitio con lógica y por eso es el único que
          * necesita pruebas unitarias de verdad.
          */
-        fun desde(etiqueta: String, muestras: List<MuestraRecursos>): ResumenRecursos {
+        /**
+         * @param metodoExigido si se pasa, la cifra reportable TIENE que salir
+         *   de ese método; si en este bloque no se puede obtener, el resumen
+         *   queda con [MetodoConsumo.NINGUNO] y [MotivoInvalidez
+         *   .SIN_METODO_EXIGIDO] en vez de caer en el otro. `null` deja la
+         *   elección automática, que es lo que quieren las pruebas de la propia
+         *   agregación y la caracterización de un terminal nuevo —ahí el objeto
+         *   de estudio es justamente qué método sirve—. La recogida del estudio
+         *   pasa [MetodoConsumo.DEL_ESTUDIO]; ver esa constante para el porqué.
+         */
+        fun desde(
+            etiqueta: String,
+            muestras: List<MuestraRecursos>,
+            metodoExigido: MetodoConsumo? = null
+        ): ResumenRecursos {
             require(muestras.isNotEmpty()) { "no se puede resumir una medición sin muestras" }
 
             val ordenadas = muestras.sortedBy { it.tMs }
@@ -204,10 +283,31 @@ data class ResumenRecursos(
                 if (integrado != null && duracion > 0) integrado * 3_600_000.0 / duracion
                 else null
 
-            val metodo = when {
+            // La elección automática prefiere el contador cuando resuelve,
+            // porque mide carga de verdad en vez de integrarla. Pero entre
+            // terminales esa preferencia es justo lo que rompe la
+            // comparabilidad, así que el estudio la anula: ver
+            // MetodoConsumo.DEL_ESTUDIO.
+            val automatico = when {
                 contadorSirve -> MetodoConsumo.CONTADOR_DE_CARGA
                 integradoPorHora != null -> MetodoConsumo.INTEGRACION_DE_CORRIENTE
                 else -> MetodoConsumo.NINGUNO
+            }
+            val metodo = when (metodoExigido) {
+                null -> automatico
+                MetodoConsumo.CONTADOR_DE_CARGA ->
+                    if (contadorSirve) MetodoConsumo.CONTADOR_DE_CARGA
+                    else MetodoConsumo.NINGUNO
+                MetodoConsumo.INTEGRACION_DE_CORRIENTE ->
+                    if (integradoPorHora != null) MetodoConsumo.INTEGRACION_DE_CORRIENTE
+                    else MetodoConsumo.NINGUNO
+                MetodoConsumo.NINGUNO -> MetodoConsumo.NINGUNO
+            }
+            // Se anota SÓLO si el método exigido falló habiendo alternativa o
+            // no: lo que importa registrar es que la cifra se descartó por
+            // política, no por falta de instrumento.
+            if (metodoExigido != null && metodo == MetodoConsumo.NINGUNO) {
+                motivos += MotivoInvalidez.SIN_METODO_EXIGIDO
             }
 
             val pss = ordenadas.map { it.pssKb }
@@ -225,6 +325,7 @@ data class ResumenRecursos(
                 pssMinKb = pss.min(),
                 pssMaxKb = pss.max(),
                 pssMedioKb = pss.map { it.toDouble() }.average(),
+                estadoPantalla = EstadoPantalla.deMuestras(ordenadas.map { it.estadoPantalla }),
                 invalidez = motivos
             )
         }
@@ -271,9 +372,20 @@ data class ResumenRecursos(
          * una tasa obtenida del contador de carga a otra obtenida integrando
          * corriente daría un número con unidades correctas y sin significado:
          * los dos instrumentos no miden lo mismo ni tienen el mismo sesgo.
+         *
+         * Y TAMPOCO SI SE MIDIERON EN REGÍMENES DE VISIBILIDAD DISTINTOS, por
+         * la misma razón. Restar una línea base tomada con la aplicación en
+         * primer plano a un bloque medido con la pantalla apagada no da el
+         * coste de la actividad: da el coste de la actividad MÁS la diferencia
+         * entre tener la pantalla encendida y apagada, que es de otro orden de
+         * magnitud y que ahogaría por completo el efecto de añadir un sensor.
+         * Un bloque [EstadoPantalla.MIXTO] tampoco sirve de referencia, porque
+         * su consumo es una mezcla en proporción desconocida.
          */
         fun neto(bloque: ResumenRecursos, lineaBase: ResumenRecursos): Double? {
             if (bloque.metodoConsumo != lineaBase.metodoConsumo) return null
+            if (bloque.estadoPantalla != lineaBase.estadoPantalla) return null
+            if (bloque.estadoPantalla == EstadoPantalla.MIXTO) return null
             val a = bloque.tasaConsumoMicroAhPorHora ?: return null
             val b = lineaBase.tasaConsumoMicroAhPorHora ?: return null
             return a - b

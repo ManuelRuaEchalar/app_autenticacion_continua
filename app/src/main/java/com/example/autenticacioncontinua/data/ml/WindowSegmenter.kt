@@ -92,40 +92,56 @@ class WindowSegmenter(
     ): List<SensorWindow> = withContext(Dispatchers.IO) {
         ultimoUmbralActividad = null
         val since = System.currentTimeMillis() - historyWindowMs
-        val accelBruto = accelerometerRepository.getAccelerometerDataSince(since)
-        val gyroBruto = gyroscopeRepository.getGyroscopeDataSince(since)
 
         // ANTES DE NADA MÁS: fuera lo que no es del dueño del teléfono. Si esto
         // se hiciera después de segmentar, la interpolación ya habría mezclado
         // las muestras de dos personas dentro de una misma ventana.
+        //
+        // El filtro viaja HASTA la lectura en vez de aplicarse a lo leído. Con
+        // dos semanas de histórico —1,4 millones de muestras por sensor— la
+        // versión anterior traía la lista entera de objetos, la mapeaba a
+        // dominio y la volvía a copiar al filtrar: tres copias vivas a la vez
+        // que agotaron el montón el 06/09 (`OutOfMemoryError` en
+        // `toDomain`, sesión federada muerta antes de conectar). Ver
+        // `SerieTriaxial`.
         val excluidos = ExclusionEtiquetada.intervalos(labeledSessionRepository.desde(since))
-        val accel = accelBruto.filterNot { ExclusionEtiquetada.contiene(excluidos, it.timestamp) }
-        val gyro = gyroBruto.filterNot { ExclusionEtiquetada.contiene(excluidos, it.timestamp) }
+        val excluir = { t: Long -> ExclusionEtiquetada.contiene(excluidos, t) }
+        val accel = accelerometerRepository.serieDesde(since, excluir)
+        val gyro = gyroscopeRepository.serieDesde(since, excluir)
 
         if (excluidos.isNotEmpty()) {
             Log.i(
                 TAG,
                 "Capturas etiquetadas de otras personas: ${excluidos.size} tramo(s) " +
-                    "excluidos del conjunto genuino; " +
-                    "acc ${accelBruto.size}->${accel.size}, " +
-                    "gyro ${gyroBruto.size}->${gyro.size} muestras"
+                    "excluidos del conjunto genuino; quedan " +
+                    "acc ${accel.size}, gyro ${gyro.size} muestras"
             )
         }
 
-        if (accel.isEmpty() || gyro.isEmpty()) {
+        if (accel.isEmpty || gyro.isEmpty) {
             Log.i(TAG, "Sin datos suficientes: accel=${accel.size}, gyro=${gyro.size}")
             return@withContext emptyList()
         }
 
-        val accTimes = LongArray(accel.size) { accel[it].timestamp }
-        val accX = FloatArray(accel.size) { accel[it].x }
-        val accY = FloatArray(accel.size) { accel[it].y }
-        val accZ = FloatArray(accel.size) { accel[it].z }
+        // La serie viene de un `ORDER BY timestamp`, así que esto sólo puede
+        // fallar si el reloj del sistema retrocedió entre dos ráfagas. Si
+        // pasara, la interpolación no fallaría: produciría señal inventada, y
+        // ventanas plausibles con las que se entrenaría igual. Mejor no
+        // entrenar.
+        require(accel.esMonotona() && gyro.esMonotona()) {
+            "La serie de sensores no es monótona en el tiempo; probablemente el " +
+                "reloj del sistema retrocedió. No se puede ventanear."
+        }
 
-        val gyroTimes = LongArray(gyro.size) { gyro[it].timestamp }
-        val gyroX = FloatArray(gyro.size) { gyro[it].x }
-        val gyroY = FloatArray(gyro.size) { gyro[it].y }
-        val gyroZ = FloatArray(gyro.size) { gyro[it].z }
+        val accTimes = accel.tiempos()
+        val accX = accel.x()
+        val accY = accel.y()
+        val accZ = accel.z()
+
+        val gyroTimes = gyro.tiempos()
+        val gyroX = gyro.x()
+        val gyroY = gyro.y()
+        val gyroZ = gyro.z()
 
         val windows = ArrayList<SensorWindow>()
         var sessionId = 0
@@ -133,8 +149,8 @@ class WindowSegmenter(
         for ((accStart, accEnd) in detectSessions(accTimes)) {
             // Sólo el tramo cubierto por AMBOS sensores es utilizable:
             // extrapolar fuera de él inventaría señal.
-            val tStart = maxOf(accTimes[accStart], gyroTimes.first())
-            val tEnd = minOf(accTimes[accEnd], gyroTimes.last())
+            val tStart = maxOf(accTimes[accStart], gyroTimes[0])
+            val tEnd = minOf(accTimes[accEnd], gyroTimes[gyroTimes.size - 1])
             if (tEnd <= tStart) continue
 
             val durationSec = (tEnd - tStart) / 1000.0

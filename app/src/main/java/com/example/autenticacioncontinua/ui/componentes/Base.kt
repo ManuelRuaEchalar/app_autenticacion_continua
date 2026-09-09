@@ -2,6 +2,7 @@ package com.example.autenticacioncontinua.ui.componentes
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -97,9 +98,16 @@ fun Tarjeta(
     modifier: Modifier = Modifier,
     contenido: @Composable () -> Unit
 ) {
+    val forma = RoundedCornerShape(Tema.formas.radioMedio)
     Box(
         modifier
-            .background(Tema.colores.superficie, RoundedCornerShape(Tema.formas.radioMedio))
+            .background(Tema.colores.superficie, forma)
+            // El borde estaba descrito arriba y no se dibujaba. Sobre el fondo
+            // principal —blanco, igual que `superficie`— eso dejaba la tarjeta
+            // invisible: se veía el contenido flotando y no el contenedor. Con
+            // la migración de la herramienta de recolección, donde casi todo
+            // vive dentro de tarjetas, el fallo pasó de cosmético a estructural.
+            .border(Tema.formas.grosorBorde, Tema.colores.borde, forma)
             .padding(Tema.espaciado.medio)
     ) { contenido() }
 }

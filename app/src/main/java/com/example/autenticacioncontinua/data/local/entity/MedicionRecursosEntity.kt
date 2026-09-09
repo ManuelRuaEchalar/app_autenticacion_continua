@@ -69,8 +69,27 @@ data class MedicionRecursosEntity(
     val valida: Boolean,
 
     val pssMinKb: Long,
+
+    /**
+     * EL ESTADISTICO DE RAM QUE DECIDE. La memoria no es un flujo que se gasta
+     * sino un nivel que se ocupa: lo que determina la viabilidad no es cuanta
+     * se usa de media sino si el PICO hace que el sistema mate el proceso. Una
+     * configuracion con media de 120 MB y pico de 400 MB es peor que otra con
+     * media de 180 y pico de 200. La media queda como descriptivo.
+     */
     val pssMaxKb: Long,
     val pssMedioKb: Double,
+
+    /**
+     * PRIMER_PLANO | SEGUNDO_PLANO | PANTALLA_APAGADA | MIXTO | DESCONOCIDO.
+     *
+     * Dos bloques medidos en estados distintos NO son comparables, igual que
+     * dos medidos con instrumentos distintos: ejecutar con otra aplicacion en
+     * primer plano sale mas barato porque el dispositivo ya esta despierto. El
+     * regimen real de la autenticacion continua es PANTALLA_APAGADA, que es el
+     * caro. Ver `EstadoPantalla`.
+     */
+    val estadoPantalla: String,
 
     /**
      * Todo lo que le paso a la medicion, separado por comas.
@@ -114,6 +133,7 @@ data class MedicionRecursosEntity(
             pssMinKb = resumen.pssMinKb,
             pssMaxKb = resumen.pssMaxKb,
             pssMedioKb = resumen.pssMedioKb,
+            estadoPantalla = resumen.estadoPantalla.name,
             invalidez = resumen.invalidez.joinToString(",") { it.name },
             tMs = tMs
         )

@@ -4,6 +4,8 @@ import android.view.MotionEvent
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.unit.IntSize
+import com.example.autenticacioncontinua.domain.tecleo.CoordenadaDeTecla
 import com.example.autenticacioncontinua.domain.tecleo.FaseDePulsacion
 import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
 
@@ -28,8 +30,18 @@ import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
  * comparables dos participantes: importa si alguien pulsa sistemáticamente en
  * el borde inferior de la tecla, no en qué píxel de la pantalla cae.
  *
+ * LAS COORDENADAS SE VALIDAN CONTRA EL TAMAÑO DE LA TECLA, y no es paranoia:
+ * en la primera visita real con dedos, el 3.5% de las pulsaciones llegó con la
+ * posición referida a OTRA tecla —siempre las solapadas, con dos dedos abajo a
+ * la vez—. El carácter y los tiempos eran correctos; sólo mentía la posición.
+ * Ver [CoordenadaDeTecla], que explica el hallazgo y por qué se anula en vez de
+ * intentar corregirse.
+ *
  * @param caracter lo que esta tecla escribe. Vacío en teclas de función.
  * @param esRetroceso si esta tecla borra.
+ * @param tamanoTecla ancho y alto actuales de la tecla, en píxeles. Se pasa como
+ *   función y no como valor porque el layout la mide DESPUÉS de componer el
+ *   modificador: un valor congelado aquí sería siempre cero.
  * @param reloj inyectable para las pruebas; por defecto, reloj de pared, que es
  *   el que usan las demás tablas.
  */
@@ -37,6 +49,7 @@ import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
 fun Modifier.capturaDePulsacion(
     caracter: String,
     esRetroceso: Boolean = false,
+    tamanoTecla: () -> IntSize = { IntSize.Zero },
     reloj: () -> Long = { System.currentTimeMillis() },
     onPulsacion: (PulsacionCruda) -> Unit
 ): Modifier = this.pointerInteropFilter { evento ->
@@ -53,14 +66,24 @@ fun Modifier.capturaDePulsacion(
     // serían del dedo equivocado.
     val i = evento.actionIndex
 
+    // Se descartan JUNTAS si el punto no cae en esta tecla: con dos dedos
+    // abajo, el evento puede traer la posición del otro, referida a su tecla.
+    val tamano = tamanoTecla()
+    val (x, y) = CoordenadaDeTecla.filtrar(
+        x = runCatching { evento.getX(i) }.getOrNull(),
+        y = runCatching { evento.getY(i) }.getOrNull(),
+        ancho = tamano.width,
+        alto = tamano.height
+    )
+
     onPulsacion(
         PulsacionCruda(
             fase = fase,
             caracter = caracter,
             esRetroceso = esRetroceso,
             tMs = reloj(),
-            x = runCatching { evento.getX(i) }.getOrNull(),
-            y = runCatching { evento.getY(i) }.getOrNull(),
+            x = x,
+            y = y,
             // `takeIf { it > 0f }`: hay terminales que devuelven 0 cuando el
             // canal no existe, y 0 es un valor imposible para un dedo que está
             // tocando. Nulo dice "no medido"; cero diría "no hay presión".

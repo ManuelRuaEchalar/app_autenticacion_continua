@@ -41,7 +41,7 @@ class ProtocoloDeBloquesTest {
             ),
             cronometro = Cronometro(),
             registro = registro,
-            configSensores = "acc_gyro",
+            configSensores = { "acc_gyro" },
             relojNanos = { scope.testScheduler.currentTime * 1_000_000 }
         )
         val protocolo = ProtocoloDeBloques(

@@ -94,8 +94,8 @@ android {
         //                          bloques, muestras, tecleo, covariables).
         //                          Las dos migraciones son ADITIVAS: no tocan
         //                          accelerometer_data ni gyroscope_data.
-        versionCode = 13
-        versionName = "1.12"
+        versionCode = 14
+        versionName = "1.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Backend en el PC de desarrollo, misma red Wi-Fi que el teléfono.
@@ -106,8 +106,11 @@ android {
         // OJO: 192.168.0.6 lo tiene ahora el movil 1 (comprobado con
         // `adb shell ip addr show wlan0` el 17/08/2026). Antes de tocar esto,
         // comprueba que la IP elegida es la del PC y no la de un telefono.
-        val serverHost = "192.168.0.7:5000"
-        val flowerHost = "192.168.0.7"
+        // 06/09/2026: el PC es ahora 192.168.0.12 (comprobado con `hostname -I`),
+        // y el movil 1 tiene el .5. La IP del PC cambia por DHCP cada pocas
+        // semanas; es la tercera vez que hay que tocar esto.
+        val serverHost = "192.168.0.12:5000"
+        val flowerHost = "192.168.0.12"
 
         buildConfigField("String", "SERVER_HOST", "\"$serverHost\"")
         buildConfigField("String", "FLOWER_HOST", "\"$flowerHost\"")

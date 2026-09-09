@@ -66,6 +66,32 @@ data class ColoresApp(
     val error: Color,
 
     /**
+     * Estado correcto y confirmado: grabando, protegido, ráfaga guardada.
+     *
+     * NO ES EL ACENTO. El acento es identidad visual —dice «esto es de esta
+     * aplicación»— y [exito] es una afirmación sobre el estado del aparato.
+     * Cuando compartían color, un indicador de marca y un «el servicio está
+     * vivo» se leían igual, y el segundo es el que hay que poder creer al
+     * mirar la pantalla de un participante remoto.
+     *
+     * Verde y no verde azulado, para que no se confunda con [acentoTexto] en
+     * la misma pantalla. Cumple 4.5:1 sobre los tres fondos claros: se usa
+     * como TEXTO en la tarjeta de protección y en el diario del dispositivo.
+     */
+    val exito: Color,
+
+    /**
+     * Atención sin fallo: esperando, en pausa, suspendido, o un aviso
+     * metodológico sobre un resultado que no se puede creer del todo.
+     *
+     * Existe separado de [error] porque la diferencia importa en la mesa de
+     * trabajo: un rojo dice «esto está roto, párate», y un ámbar dice «esto
+     * funciona pero no es lo que crees». Fundirlos en un solo color hace que
+     * el investigador acabe ignorando los dos.
+     */
+    val aviso: Color,
+
+    /**
      * Fondo del teclado del minijuego.
      *
      * Más oscuro que las teclas para que éstas se lean como teclas sin
@@ -121,6 +147,17 @@ val ColoresClaros = ColoresApp(
     // blanco: el carácter fallado del teleprompter es texto que hay que leer,
     // no un adorno.
     error = Color(0xFFC5221F),
+    // Verde franco, no el verde azulado del acento: los dos aparecen en la
+    // misma pantalla —la barra de progreso es acento, el «Protegido» es éxito—
+    // y con el mismo tono la distinción semántica no se vería. 5.42:1 sobre
+    // blanco y 4.59:1 sobre `hover`, así que vale como texto en cualquiera de
+    // los fondos claros. Lo comprueba `ContrasteTest`.
+    exito = Color(0xFF0F7A3D),
+    // Ámbar oscurecido hasta 5.93:1 sobre blanco. El naranja habitual de los
+    // avisos (#D29922, el de la paleta oscura anterior) daba 2.0:1 sobre
+    // blanco: sobre fondo claro era ilegible, y los avisos son justo el texto
+    // que no se puede permitir que nadie se salte.
+    aviso = Color(0xFF8A5A00),
     // Grises del teclado, tomados de la disposición clara por defecto de los
     // teclados de Android. NO se copia el tema del teléfono que se usó para
     // medirlo —ese tenía un tema personalizado color melocotón—: el aspecto del

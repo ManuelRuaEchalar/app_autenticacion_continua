@@ -1,4 +1,8 @@
 package com.example.autenticacioncontinua.controlada
+import com.example.autenticacioncontinua.domain.export.IExportadorDeSesion
+import com.example.autenticacioncontinua.domain.export.PaqueteDeSesion
+import com.example.autenticacioncontinua.domain.export.VerificacionDePaquete
+import java.io.File
 
 import com.example.autenticacioncontinua.data.local.dao.controlada.RepartoDispositivo
 import com.example.autenticacioncontinua.data.local.entity.controlada.BloqueEntity
@@ -315,4 +319,47 @@ class SesionesEnMemoria : ISesionControladaRepository {
     override suspend fun guardarCovariables(filas: List<CovariableSesionEntity>) = Unit
     override suspend fun tasaEfectivaHz(bloqueId: Long): Double? = null
     override suspend fun cuantasMuestras(bloqueId: Long) = 0
+}
+
+/**
+ * Exportador de mentira, con un interruptor para que falle.
+ *
+ * TIENE QUE PODER FALLAR. La parte de la fase 9 que hay que poder probar en la
+ * JVM no es que exportar funcione —eso necesita un disco de verdad y va en la
+ * prueba instrumentada—, sino qué hace la visita CUANDO NO funciona: que la
+ * sesión ya esté cerrada, que los datos no se pierdan y que el botón de salir
+ * siga bloqueado en vez de dejar marchar al participante con la copia a medias.
+ */
+class ExportadorFalso(
+    var falla: Boolean = false,
+    var corrupto: Boolean = false
+) : IExportadorDeSesion {
+
+    val exportadas = mutableListOf<Long>()
+    var intentos = 0
+        private set
+
+    override suspend fun exportar(sesionId: Long): Result<PaqueteDeSesion> {
+        intentos++
+        if (falla) return Result.failure(IllegalStateException("disco lleno"))
+        exportadas += sesionId
+        return Result.success(
+            PaqueteDeSesion(
+                fichero = File("sesion_P01_v1_prueba.zip"),
+                huella = "a".repeat(64),
+                bytes = 2048,
+                filasPorTabla = mapOf("bloques.csv" to 3, "eventos_tecleo.csv" to 657)
+            )
+        )
+    }
+
+    override suspend fun verificar(fichero: File): Result<VerificacionDePaquete> =
+        Result.success(
+            VerificacionDePaquete(
+                huella = if (corrupto) "b".repeat(64) else "a".repeat(64),
+                tablasIntactas = if (corrupto) emptyList() else listOf("bloques.csv"),
+                tablasCorruptas = if (corrupto) listOf("bloques.csv") else emptyList(),
+                filasPorTabla = mapOf("bloques.csv" to 3)
+            )
+        )
 }

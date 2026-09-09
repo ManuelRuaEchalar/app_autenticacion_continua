@@ -26,6 +26,9 @@ import com.example.autenticacioncontinua.monitoring.FuenteEnergiaAndroid
 import com.example.autenticacioncontinua.monitoring.FuenteMemoria
 import com.example.autenticacioncontinua.monitoring.FuenteMemoriaAndroid
 import com.example.autenticacioncontinua.monitoring.MedidorDeOperacion
+import com.example.autenticacioncontinua.data.controlada.SelectorDeConfiguracion
+import com.example.autenticacioncontinua.monitoring.FuenteEstadoPantalla
+import com.example.autenticacioncontinua.monitoring.FuenteEstadoPantallaAndroid
 import com.example.autenticacioncontinua.monitoring.MonitorBloque
 import com.example.autenticacioncontinua.monitoring.ProtocoloDeBloques
 import com.example.autenticacioncontinua.monitoring.IBatteryMonitor
@@ -148,13 +151,14 @@ val mlModule = module {
     // su logica se prueba con dobles y sin dispositivo.
     single<FuenteEnergia> { FuenteEnergiaAndroid(androidContext()) }
     single<FuenteMemoria> { FuenteMemoriaAndroid() }
+    single<FuenteEstadoPantalla> { FuenteEstadoPantallaAndroid(androidContext()) }
 
     single<IBatteryMonitor> { BatteryMonitorImpl(get()) }
     single<IRamMonitor> { RamMonitorImpl(get()) }
 
     // Medicion sobre bloques sostenidos: es la unica forma de medir bateria,
     // porque el contador de carga no resuelve operaciones de pocos segundos.
-    single { MonitorBloque(energia = get(), memoria = get()) }
+    single { MonitorBloque(energia = get(), memoria = get(), estadoPantalla = get()) }
 
     // Latencias: inferencia, entrenamiento local, ronda federada, extremo a
     // extremo. Compartido para que todas las series caigan en el mismo sitio.
@@ -168,7 +172,9 @@ val mlModule = module {
             monitor = get(),
             cronometro = get(),
             registro = get(),
-            configSensores = get<ModelManifest>().sensorConfig
+            // Se consulta en cada medicion, no al construir: ver la nota del
+            // parametro en MedidorDeOperacion.
+            configSensores = { get<SelectorDeConfiguracion>().activa().clave }
         )
     }
 

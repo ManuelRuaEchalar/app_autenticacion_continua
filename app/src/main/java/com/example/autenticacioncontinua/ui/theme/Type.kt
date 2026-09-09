@@ -24,41 +24,64 @@ import androidx.compose.ui.unit.sp
 val FamiliaApp = FontFamily.SansSerif
 
 /**
- * Pocos estilos y pocos pesos. Sólo tres pesos —normal, medio, semi— porque una
+ * Pocos estilos y pocos pesos. Sólo tres —normal, medio, semi— porque una
  * herramienta de trabajo no necesita más y cada peso extra es otro fichero que
  * empaquetar.
+ *
+ * ### SE RELLENAN LOS QUINCE HUECOS DE MATERIAL, Y NO ES POR COMPLETISMO
+ *
+ * `Typography` define quince estilos. Esta tabla llenaba cinco, y los diez
+ * restantes se quedaban con los de fábrica de Material 3 — que traen
+ * `FontFamily.Default`, no [FamiliaApp]. Cualquier `MaterialTheme.typography.
+ * bodySmall` o `headlineSmall` salía entonces con la fuente del sistema, y los
+ * componentes de Material que usan esos huecos por dentro —las etiquetas de
+ * `OutlinedTextField`, el título de `AlertDialog`— también.
+ *
+ * O sea que la aplicación mezclaba dos tipografías sin que nadie lo hubiera
+ * pedido, y en dos terminales de fabricantes distintos ni siquiera mezclaba las
+ * mismas dos. Con la fuente empaquetada pendiente (ver arriba), rellenarlos es
+ * lo que hace que ese cambio de una constante alcance de verdad a TODA la
+ * interfaz en vez de a un tercio.
+ *
+ * Los tamaños salen de [Tipos], que es la escala del sistema de diseño; los
+ * huecos que la escala no cubre se interpolan y se dejan anotados.
  */
+private fun estilo(
+    tamano: androidx.compose.ui.unit.TextUnit,
+    alto: androidx.compose.ui.unit.TextUnit,
+    peso: FontWeight = FontWeight.Normal
+) = TextStyle(
+    fontFamily = FamiliaApp,
+    fontWeight = peso,
+    fontSize = tamano,
+    lineHeight = alto
+)
+
 val Typography = Typography(
-    titleLarge = TextStyle(
-        fontFamily = FamiliaApp,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = Tipos.titulo,
-        lineHeight = 32.sp
-    ),
-    titleMedium = TextStyle(
-        fontFamily = FamiliaApp,
-        fontWeight = FontWeight.Medium,
-        fontSize = Tipos.subtitulo,
-        lineHeight = 26.sp
-    ),
-    bodyLarge = TextStyle(
-        fontFamily = FamiliaApp,
-        fontWeight = FontWeight.Normal,
-        fontSize = Tipos.cuerpo,
-        lineHeight = 22.sp
-    ),
-    bodyMedium = TextStyle(
-        fontFamily = FamiliaApp,
-        fontWeight = FontWeight.Normal,
-        fontSize = Tipos.menor,
-        lineHeight = 18.sp
-    ),
-    labelLarge = TextStyle(
-        fontFamily = FamiliaApp,
-        fontWeight = FontWeight.Medium,
-        fontSize = Tipos.cuerpo,
-        lineHeight = 20.sp
-    )
+    // `display*` no se usa en ninguna pantalla; se define igualmente para que
+    // un componente de Material que lo pida no se lleve la fuente del sistema.
+    displayLarge = estilo(40.sp, 48.sp, FontWeight.SemiBold),
+    displayMedium = estilo(34.sp, 42.sp, FontWeight.SemiBold),
+    displaySmall = estilo(Tipos.cifra, 36.sp, FontWeight.SemiBold),
+
+    headlineLarge = estilo(30.sp, 38.sp, FontWeight.SemiBold),
+    headlineMedium = estilo(Tipos.cifra, 36.sp, FontWeight.SemiBold),
+    headlineSmall = estilo(Tipos.titulo, 32.sp, FontWeight.SemiBold),
+
+    titleLarge = estilo(Tipos.titulo, 32.sp, FontWeight.SemiBold),
+    titleMedium = estilo(Tipos.subtitulo, 26.sp, FontWeight.Medium),
+    titleSmall = estilo(Tipos.cuerpo, 22.sp, FontWeight.Medium),
+
+    bodyLarge = estilo(Tipos.cuerpo, 22.sp),
+    bodyMedium = estilo(Tipos.menor, 18.sp),
+    // El escalón por debajo del menor de la escala. Es el mínimo que se admite
+    // como texto seguido: menos que esto ya no se lee de reojo, que es como se
+    // mira esta aplicación durante una sesión.
+    bodySmall = estilo(12.sp, 17.sp),
+
+    labelLarge = estilo(Tipos.cuerpo, 20.sp, FontWeight.Medium),
+    labelMedium = estilo(Tipos.menor, 17.sp, FontWeight.Medium),
+    labelSmall = estilo(11.sp, 15.sp, FontWeight.Medium)
 )
 
 /**

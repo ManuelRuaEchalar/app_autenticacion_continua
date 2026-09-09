@@ -3,6 +3,7 @@ package com.example.autenticacioncontinua.domain.repository
 import com.example.autenticacioncontinua.data.local.entity.MedicionLatenciaEntity
 import com.example.autenticacioncontinua.data.local.entity.MedicionRecursosEntity
 import com.example.autenticacioncontinua.monitoring.EstadisticaLatencia
+import com.example.autenticacioncontinua.monitoring.EstadoPantalla
 import com.example.autenticacioncontinua.monitoring.MetodoConsumo
 import com.example.autenticacioncontinua.monitoring.ResumenRecursos
 
@@ -41,7 +42,8 @@ interface IRegistroMediciones {
     suspend fun registrarLatencia(
         estadistica: EstadisticaLatencia,
         configSensores: String,
-        regimenAprendizaje: String
+        regimenAprendizaje: String,
+        estadoPantalla: EstadoPantalla = EstadoPantalla.DESCONOCIDO
     ): Long?
 
     suspend fun bloques(): List<MedicionRecursosEntity>

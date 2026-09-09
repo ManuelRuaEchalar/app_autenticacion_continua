@@ -17,8 +17,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.autenticacioncontinua.domain.tecleo.FaseDePulsacion
 import com.example.autenticacioncontinua.domain.tecleo.PulsacionCruda
@@ -91,8 +93,15 @@ import com.example.autenticacioncontinua.ui.theme.Tipos
 fun TecladoEnPantalla(
     onPulsacion: (PulsacionCruda) -> Unit,
     modifier: Modifier = Modifier,
-    habilitado: Boolean = true
+    habilitado: Boolean = true,
+    retroalimentacion: RetroalimentacionDeTecla = RetroalimentacionDeTecla.DEL_ESTUDIO
 ) {
+    // Se resuelve UNA vez para el teclado entero y se reparte por las filas. Si
+    // cada tecla llamara a `LocalView.current` por su cuenta serian cuarenta y
+    // tantas búsquedas en la composición local para obtener siempre la misma
+    // vista.
+    val alPulsar = recordarRetroalimentacionDeTecla(retroalimentacion)
+
     Column(
         modifier
             .fillMaxWidth()
@@ -105,22 +114,25 @@ fun TecladoEnPantalla(
     ) {
         // Fila de acentos. Va ARRIBA y no repartida entre las letras para que
         // las tres filas alfabéticas queden exactamente donde MIUI las pone.
-        FilaCentrada(ACENTOS, onPulsacion, habilitado)
+        FilaCentrada(ACENTOS, onPulsacion, habilitado, alPulsar)
 
-        FilaCompleta(FILA_SUPERIOR, onPulsacion, habilitado)
-        FilaCompleta(FILA_CENTRAL, onPulsacion, habilitado)
+        FilaCompleta(FILA_SUPERIOR, onPulsacion, habilitado, alPulsar)
+        FilaCompleta(FILA_CENTRAL, onPulsacion, habilitado, alPulsar)
 
         // La fila de MIUI: Mayúsculas | z…m | Retroceso. El hueco de Mayúsculas
         // se deja vacío para no correr las letras media tecla a la izquierda.
         Fila {
             Box(Modifier.weight(FUNCION))
-            for (t in FILA_INFERIOR) Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado)
+            for (t in FILA_INFERIOR) {
+                Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado, alPulsar)
+            }
             Tecla(
                 caracter = "",
                 rotulo = "⌫",
                 modifier = Modifier.weight(FUNCION),
                 onPulsacion = onPulsacion,
                 habilitado = habilitado,
+                alPulsar = alPulsar,
                 esRetroceso = true,
                 esFuncion = true
             )
@@ -128,9 +140,9 @@ fun TecladoEnPantalla(
 
         // Coma y punto flanqueando el espacio, como en MIUI.
         Fila {
-            Tecla(",", ",", Modifier.weight(FUNCION), onPulsacion, habilitado)
-            Tecla(ESPACIO, "", Modifier.weight(ESPACIO_ANCHO), onPulsacion, habilitado)
-            Tecla(".", ".", Modifier.weight(FUNCION), onPulsacion, habilitado)
+            Tecla(",", ",", Modifier.weight(FUNCION), onPulsacion, habilitado, alPulsar)
+            Tecla(ESPACIO, "", Modifier.weight(ESPACIO_ANCHO), onPulsacion, habilitado, alPulsar)
+            Tecla(".", ".", Modifier.weight(FUNCION), onPulsacion, habilitado, alPulsar)
         }
     }
 }
@@ -149,9 +161,10 @@ private fun Fila(contenido: @Composable RowScope.() -> Unit) {
 private fun FilaCompleta(
     teclas: List<String>,
     onPulsacion: (PulsacionCruda) -> Unit,
-    habilitado: Boolean
+    habilitado: Boolean,
+    alPulsar: () -> Unit
 ) = Fila {
-    for (t in teclas) Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado)
+    for (t in teclas) Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado, alPulsar)
 }
 
 /**
@@ -165,22 +178,26 @@ private fun FilaCompleta(
 private fun FilaCentrada(
     teclas: List<String>,
     onPulsacion: (PulsacionCruda) -> Unit,
-    habilitado: Boolean
+    habilitado: Boolean,
+    alPulsar: () -> Unit
 ) = Fila {
     val hueco = (COLUMNAS - teclas.size) / 2f
     Box(Modifier.weight(hueco))
-    for (t in teclas) Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado)
+    for (t in teclas) Tecla(t, t, Modifier.weight(1f), onPulsacion, habilitado, alPulsar)
     Box(Modifier.weight(hueco))
 }
 
 /**
  * Una tecla.
  *
- * SE ILUMINA AL PULSARLA, como la del sistema. No es adorno: sin respuesta
- * visual el participante duda de si la pulsación entró y repite la tecla, y esa
- * repetición no es dinámica de tecleo sino incertidumbre sobre la interfaz. El
- * realce se pinta desde el mismo evento que se registra, así que no añade
- * ninguna latencia a la medición.
+ * SE ILUMINA Y SUENA AL PULSARLA, como la del sistema. No es adorno: sin
+ * respuesta el participante duda de si la pulsación entró y repite la tecla, y
+ * esa repetición no es dinámica de tecleo sino incertidumbre sobre la interfaz.
+ * El realce se pinta desde el mismo evento que se registra, así que no añade
+ * ninguna latencia a la medición; el chasquido se dispara antes de registrar,
+ * por lo mismo. La vibración está disponible pero NO activa, porque el motor
+ * mete su pulso en la señal inercial que se está grabando: el razonamiento
+ * entero está en [RetroalimentacionDeTecla].
  *
  * El área pulsable nunca baja de
  * [com.example.autenticacioncontinua.ui.theme.FormasApp.objetivoTactil]: teclas
@@ -195,10 +212,16 @@ private fun Tecla(
     modifier: Modifier,
     onPulsacion: (PulsacionCruda) -> Unit,
     habilitado: Boolean,
+    alPulsar: () -> Unit,
     esRetroceso: Boolean = false,
     esFuncion: Boolean = false
 ) {
     var pulsada by remember { mutableStateOf(false) }
+
+    // El tamaño real que el layout le dio a esta tecla. Hace falta para saber
+    // si una coordenada cae dentro de ella: con dos dedos abajo a la vez el
+    // evento puede traer la posición de la tecla vecina. Ver `CoordenadaDeTecla`.
+    var tamano by remember { mutableStateOf(IntSize.Zero) }
 
     val fondo = when {
         !habilitado -> Tema.colores.teclaFuncion
@@ -210,14 +233,22 @@ private fun Tecla(
     Box(
         modifier
             .height(Tema.formas.objetivoTactil)
+            .onSizeChanged { tamano = it }
             .background(fondo, RoundedCornerShape(RADIO_TECLA))
             .then(
                 if (habilitado) {
                     Modifier.capturaDePulsacion(
                         caracter = caracter,
-                        esRetroceso = esRetroceso
+                        esRetroceso = esRetroceso,
+                        tamanoTecla = { tamano }
                     ) { p ->
-                        pulsada = p.fase == FaseDePulsacion.ABAJO
+                        val abajo = p.fase == FaseDePulsacion.ABAJO
+                        pulsada = abajo
+                        // El chasquido va ANTES de registrar y sólo al bajar.
+                        // El instante de la pulsación ya se tomó dentro de
+                        // `capturaDePulsacion`, así que esto no toca ninguna
+                        // medición; ver `RetroalimentacionDeTecla`.
+                        if (abajo) alPulsar()
                         onPulsacion(p)
                     }
                 } else Modifier

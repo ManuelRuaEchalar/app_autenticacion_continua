@@ -130,6 +130,57 @@ class ContrasteTest {
     }
 
     /**
+     * Los dos colores de estado, sobre los fondos donde se leen.
+     *
+     * Son TEXTO, no adornos: «Protegido», «Recolección suspendida» o el aviso
+     * de que un EER no se puede creer son frases que hay que poder leer. El
+     * naranja y el verde de la paleta oscura anterior (#D29922 y #3FB950) se
+     * quedaban en 2.0:1 y 2.8:1 sobre blanco — perfectamente legibles sobre el
+     * fondo negro para el que se eligieron, e ilegibles sobre el claro. Es
+     * exactamente el error que se comete al mudar una paleta de un modo al
+     * otro sin recalcular, y por eso se comprueba aquí.
+     */
+    @Test
+    fun `los colores de estado cumplen AA como texto sobre los fondos claros`() {
+        val c = ColoresClaros
+        exigir(c.exito, c.fondo, 4.5, "exito sobre fondo")
+        exigir(c.exito, c.fondoSecundario, 4.5, "exito sobre superficie secundaria")
+        exigir(c.exito, c.hover, 4.5, "exito sobre hover")
+        exigir(c.aviso, c.fondo, 4.5, "aviso sobre fondo")
+        exigir(c.aviso, c.fondoSecundario, 4.5, "aviso sobre superficie secundaria")
+        exigir(c.aviso, c.hover, 4.5, "aviso sobre hover")
+        exigir(c.error, c.fondoSecundario, 4.5, "error sobre superficie secundaria")
+        exigir(c.error, c.hover, 4.5, "error sobre hover")
+    }
+
+    /**
+     * Y los tres estados tienen que distinguirse ENTRE SÍ, no sólo del fondo.
+     *
+     * Un semáforo cuyos tres colores cumplen el contraste contra el fondo pero
+     * son casi el mismo tono entre ellos no informa de nada. El caso que esta
+     * prueba vigila es el de [ColoresApp.exito] contra [ColoresApp.acentoTexto],
+     * que son los dos verdes de la paleta y conviven en la misma pantalla.
+     */
+    @Test
+    fun `los colores de estado se distinguen entre si y del acento`() {
+        val c = ColoresClaros
+        val pares = listOf(
+            Triple("exito/aviso", c.exito, c.aviso),
+            Triple("exito/error", c.exito, c.error),
+            Triple("aviso/error", c.aviso, c.error),
+            Triple("exito/acentoTexto", c.exito, c.acentoTexto)
+        )
+        for ((que, a, b) in pares) {
+            assertTrue(
+                "$que son practicamente el mismo color (%.2f de distancia): ".format(
+                    distancia(a, b)
+                ) + "el estado dejaria de leerse por el color",
+                distancia(a, b) > 0.12
+            )
+        }
+    }
+
+    /**
      * Las letras del teclado, sobre los tres fondos que puede tener una tecla.
      *
      * Es el texto que el participante mira mientras teclea durante toda la
@@ -207,7 +258,9 @@ class ContrasteTest {
             "acento" to c.acento,
             "acentoTexto" to c.acentoTexto,
             "iconoSutil" to c.iconoSutil,
-            "error" to c.error
+            "error" to c.error,
+            "exito" to c.exito,
+            "aviso" to c.aviso
         )
         val fondos = listOf(
             "fondo" to c.fondo,
@@ -230,6 +283,20 @@ class ContrasteTest {
             r >= minimo
         )
     }
+
+    /**
+     * Distancia entre dos colores, en el cubo RGB normalizado.
+     *
+     * NO es una métrica perceptual —CIEDE2000 lo sería—, y no hace falta que lo
+     * sea: aquí sólo se comprueba que dos colores de estado no hayan acabado
+     * siendo el mismo tras un retoque de la paleta. Para eso, la distancia
+     * euclídea basta y no trae una dependencia nueva.
+     */
+    private fun distancia(a: Color, b: Color): Double = kotlin.math.sqrt(
+        ((a.red - b.red).toDouble()).pow(2) +
+            ((a.green - b.green).toDouble()).pow(2) +
+            ((a.blue - b.blue).toDouble()).pow(2)
+    )
 
     /** Cociente de contraste de WCAG 2.1. */
     private fun contraste(a: Color, b: Color): Double {

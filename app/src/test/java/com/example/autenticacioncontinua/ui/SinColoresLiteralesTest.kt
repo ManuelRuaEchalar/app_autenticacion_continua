@@ -13,14 +13,18 @@ import java.io.File
  * pantallas, `ContrasteTest` deja de poder comprobar que todo lo que se lee
  * cumple el mínimo legible, porque ya no sabe qué combinaciones existen.
  *
- * ### La deuda declarada
+ * ### La deuda declarada, saldada el 31/08
  *
- * `MainActivity.kt` trae su propia paleta oscura, de cuando la aplicación era
- * sólo la herramienta de recolección. Migrarla al sistema nuevo es la pantalla
- * P1 del plan y se hará con las pantallas del estudio; hasta entonces está en
- * [EXCEPCIONES] con su recuento exacto. **El recuento se comprueba**: si
- * aparecen literales nuevos ahí, la prueba falla igual. Una excepción sin
- * número es una puerta abierta.
+ * `MainActivity.kt` traía su propia paleta oscura —diez constantes— de cuando
+ * la aplicación era sólo la herramienta de recolección, y estaba en
+ * [EXCEPCIONES] con su recuento exacto. Ya no: la pantalla P1 y las dos que
+ * colgaban de ella (`ProtectionAndDiary.kt` y `LabeledCaptureScreen.kt`) leen
+ * de `ui/theme`, y [EXCEPCIONES] está vacío.
+ *
+ * **SE DEJA EL MECANISMO, no sólo el mapa vacío.** La regla que se comprobaba
+ * sobre esa deuda —un recuento exacto, nunca una excepción abierta— es la que
+ * hace que declarar deuda sea barato y acumularla caro. La próxima pantalla que
+ * llegue a medio migrar tiene dónde apuntarse, con número.
  */
 class SinColoresLiteralesTest {
 
@@ -90,9 +94,11 @@ class SinColoresLiteralesTest {
         /**
          * Fichero -> cuántos literales se toleran mientras dure la migración.
          *
-         * MainActivity conserva la paleta oscura de la herramienta de
-         * recolección (10 constantes). Se migra con las pantallas del estudio.
+         * VACÍO, y ése es el estado correcto. La única entrada que tuvo fue
+         * `MainActivity.kt` con sus 10 constantes de la paleta oscura, y se
+         * quitó el 31/08 al migrarla. Añadir aquí un fichero es declarar deuda:
+         * se admite, con número, y con la fecha en que se piensa saldar.
          */
-        val EXCEPCIONES = mapOf("MainActivity.kt" to 10)
+        val EXCEPCIONES = emptyMap<String, Int>()
     }
 }

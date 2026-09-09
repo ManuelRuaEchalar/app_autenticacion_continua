@@ -389,6 +389,7 @@ class ParticipantesViewModelTest {
 
         v.alternarComprobacion(ListaDeVerificacion.BRILLO)
         v.alternarComprobacion(ListaDeVerificacion.NO_MOLESTAR)
+        v.alternarComprobacion(ListaDeVerificacion.SONIDO)
 
         assertTrue(v.estado.value.puedeEmpezarLaVisita)
     }

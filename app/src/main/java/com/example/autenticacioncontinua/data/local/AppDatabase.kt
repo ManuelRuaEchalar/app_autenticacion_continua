@@ -55,7 +55,7 @@ import com.example.autenticacioncontinua.data.local.entity.TrainingRunEntity
         EventoTecleoEntity::class,
         CovariableSesionEntity::class
     ],
-    version = 11,
+    version = 13,
     // Se exporta a `app/schemas`. Es lo que permite contrastar el SQL de las
     // migraciones con el esquema real sin un telefono delante.
     exportSchema = true
@@ -330,6 +330,74 @@ abstract class AppDatabase : RoomDatabase() {
          * tabla vieja, y sin él dos altas del mismo participante volverían a
          * poder partirlo en dos identidades.
          */
+        /**
+         * `estadoPantalla` en las dos tablas de medicion.
+         *
+         * POR QUE HACE FALTA. Ejecutar trabajo con otra aplicacion en primer
+         * plano sale mas barato que con el telefono en reposo: la pantalla ya
+         * esta encendida, el procesador despierto y la radio activa, de modo
+         * que a nuestro trabajo solo se le atribuye el incremento. Sin esta
+         * columna, la diferencia entre la configuracion A y la B podria ser en
+         * realidad la diferencia entre haberlas medido con la pantalla
+         * encendida y con la pantalla apagada, que es de otro orden de
+         * magnitud. Con ella, `ResumenRecursos.neto` puede negarse a restar una
+         * linea base tomada en otro regimen, igual que ya se niega a restar
+         * entre metodos de medida distintos.
+         *
+         * ADD COLUMN sigue siendo barato aqui por la misma razon que en la
+         * 9->10: solo toca la cabecera y las dos tablas tienen cero filas en
+         * todos los terminales, porque la campana de medicion aun no se ha
+         * ejecutado. Sobre `accelerometer_data` seguiria estando prohibido.
+         *
+         * EL DEFECTO ES 'DESCONOCIDO' Y NO UN ESTADO CONCRETO. Si alguna fila
+         * previa existiera, su regimen no se observo y decir que fue
+         * PRIMER_PLANO seria inventarselo; DESCONOCIDO la deja fuera de los
+         * analisis por estado, que es lo correcto.
+         */
+        /**
+         * 12 -> 13: indice por `timestamp` en las dos tablas de sensores.
+         *
+         * POR QUE. Esta migracion no la pide una funcionalidad nueva: la pide un
+         * fallo medido. La noche del 06/09, con 1 989 457 filas de acelerometro
+         * y 1 942 451 de giroscopio, la sesion federada murio con
+         * `OutOfMemoryError` en `GyroscopeEntityKt.toDomain` tras seis minutos
+         * dentro de `prepareDataset`. La causa tenia dos mitades y esta es la
+         * primera: sin indice, `WHERE timestamp >= ? ORDER BY timestamp` no
+         * puede recorrerse en orden, asi que SQLite leia la tabla entera y la
+         * ordenaba en un b-tree temporal, y el resultado —1,4 millones de filas
+         * por sensor— solo podia entregarse de una vez. La otra mitad, leer por
+         * bloques en vez de materializar la lista, esta en `SerieTriaxial`; sin
+         * este indice esa lectura por bloques seria cuadratica y no serviria de
+         * nada.
+         *
+         * CREATE INDEX SI ES CARO AQUI, al contrario que los ADD COLUMN de las
+         * migraciones anteriores: hay que ordenar dos millones de filas por
+         * tabla, y en el terminal de campo eso son decenas de segundos con la
+         * base bloqueada. Se paga UNA vez, en el primer arranque tras
+         * actualizar, y a cambio cada ventaneo posterior deja de pagarlo.
+         *
+         * EL NOMBRE NO ES LIBRE. Room valida el esquema al abrir comparandolo
+         * con el que genera de las anotaciones, y espera exactamente
+         * `index_<tabla>_<columna>`. Un nombre distinto aqui haria fallar la
+         * apertura en el terminal ya migrado, que es el peor sitio posible para
+         * descubrirlo.
+         */
+        internal val SQL_12_13: List<String> = listOf(
+            "CREATE INDEX IF NOT EXISTS `index_accelerometer_data_timestamp` " +
+                "ON `accelerometer_data` (`timestamp`)",
+
+            "CREATE INDEX IF NOT EXISTS `index_gyroscope_data_timestamp` " +
+                "ON `gyroscope_data` (`timestamp`)"
+        )
+
+        internal val SQL_11_12: List<String> = listOf(
+            "ALTER TABLE `mediciones_recursos` " +
+                "ADD COLUMN `estadoPantalla` TEXT NOT NULL DEFAULT 'DESCONOCIDO'",
+
+            "ALTER TABLE `mediciones_latencia` " +
+                "ADD COLUMN `estadoPantalla` TEXT NOT NULL DEFAULT 'DESCONOCIDO'"
+        )
+
         internal val SQL_10_11: List<String> = listOf(
             "CREATE TABLE IF NOT EXISTS `participantes_nueva` (" +
                 "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
@@ -547,6 +615,20 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 SQL_10_11.forEach(db::execSQL)
+            }
+        }
+
+        /** Ver la nota de [SQL_11_12]. */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_11_12.forEach(db::execSQL)
+            }
+        }
+
+        /** Ver la nota de [SQL_12_13]. */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                SQL_12_13.forEach(db::execSQL)
             }
         }
     }

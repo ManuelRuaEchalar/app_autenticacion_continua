@@ -27,7 +27,7 @@ import org.junit.runner.RunWith
  * haya huecos. Android trata la tasa de muestreo como una SUGERENCIA —puede
  * entregar mas lento porque el sensor no da mas, o mas rapido porque otra app
  * pidio mas y el flujo es compartido— asi que la tasa efectiva hay que MEDIRLA,
- * no suponerla. Si este terminal no llega a 100 Hz, el protocolo tiene que
+ * no suponerla. Si este terminal no llega a 50 Hz, el protocolo tiene que
  * saberlo antes de recoger sesenta dias.
  *
  * Se ejecuta con:
@@ -77,7 +77,11 @@ class CapturaSensoresTest {
     }
 
     /**
-     * Los tres sensores a 100 Hz durante un minuto.
+     * Los tres sensores a 50 Hz durante un minuto.
+     *
+     * ERA 100 HASTA EL 06/09. Se bajo porque el magnetometro del terminal B
+     * topa en 50 Hz —medido: 20.00 ms clavados de intervalo— y el diseño
+     * cruzado persona x dispositivo exige la misma tasa en los dos aparatos.
      *
      * Un minuto y no diez segundos porque los huecos que importan —una
      * recoleccion de basura, el gobernador bajando frecuencia, otra app
@@ -212,7 +216,7 @@ class CapturaSensoresTest {
 
     private companion object {
         const val TAG = "CapturaSensores"
-        const val HZ = 100
+        const val HZ = 50
         const val DURACION_MS = 60_000L
 
         /**

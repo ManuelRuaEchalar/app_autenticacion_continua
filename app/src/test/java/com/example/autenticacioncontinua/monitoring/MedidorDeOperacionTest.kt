@@ -40,7 +40,7 @@ class MedidorDeOperacionTest {
             monitor = monitor,
             cronometro = cronometro,
             registro = registro,
-            configSensores = "acc_gyro",
+            configSensores = { "acc_gyro" },
             relojNanos = { nanos }
         )
     }

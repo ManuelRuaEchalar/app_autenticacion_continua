@@ -77,8 +77,14 @@ data class MuestraInercialEntity(
          */
         const val NOTA_INDICE = "indice compuesto (bloqueId, tMonotonoNs)"
 
-        /** 100 Hz. La tasa la fija el protocolo, no el código. */
-        const val HZ_OBJETIVO = 100
+        /**
+         * 50 Hz. La tasa la fija el protocolo, no el código.
+         *
+         * Bajada de 100 a 50 el 06/09 porque el magnetómetro del terminal B
+         * topa en 50 Hz y el diseño cruzado exige la misma tasa en los dos
+         * aparatos. El razonamiento completo está en `HZ_CONTROLADO`.
+         */
+        const val HZ_OBJETIVO = 50
 
         /**
          * Tamaño de lote de inserción.

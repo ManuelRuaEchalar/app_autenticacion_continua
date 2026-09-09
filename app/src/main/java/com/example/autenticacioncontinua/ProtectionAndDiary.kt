@@ -7,13 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -35,6 +27,14 @@ import com.example.autenticacioncontinua.device.protection.ProtectionStatus
 import com.example.autenticacioncontinua.domain.model.DeviceEvent
 import com.example.autenticacioncontinua.domain.model.DeviceEventType
 import com.example.autenticacioncontinua.domain.repository.IDeviceEventRepository
+import com.example.autenticacioncontinua.ui.componentes.BotonPrimario
+import com.example.autenticacioncontinua.ui.componentes.BotonSecundario
+import com.example.autenticacioncontinua.ui.componentes.CabeceraDeEstado
+import com.example.autenticacioncontinua.ui.componentes.EstadoVisual
+import com.example.autenticacioncontinua.ui.componentes.Tarjeta
+import com.example.autenticacioncontinua.ui.componentes.TextoDeEstado
+import com.example.autenticacioncontinua.ui.theme.Tema
+import com.example.autenticacioncontinua.ui.theme.Tipos
 import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -67,44 +67,33 @@ fun ProtectionCard(protection: ProtectionStatus = koinInject()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val color = when {
-        !estado.bateriaExenta -> AccentRed
-        estado.esXiaomi -> AccentOrange
-        else -> AccentGreen
+    val visual = when {
+        !estado.bateriaExenta -> EstadoVisual.ERROR
+        estado.esXiaomi -> EstadoVisual.AVISO
+        else -> EstadoVisual.EXITO
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PulsingDot(color)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    if (estado.protegido) "Protegido" else "Protección incompleta",
-                    color = color,
-                    style = MaterialTheme.typography.titleMedium
-                        .copy(fontWeight = FontWeight.Bold)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                estado.resumen,
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodySmall
+    Tarjeta(Modifier.fillMaxWidth()) {
+        Column {
+            CabeceraDeEstado(
+                titulo = if (estado.protegido) "Protegido" else "Protección incompleta",
+                estado = visual,
+                detalle = estado.resumen,
+                // Late sólo cuando hay algo que atender: un punto que parpadea
+                // todo el rato deja de significar nada.
+                pulsante = !estado.protegido
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(Tema.espaciado.medio))
             LineaConcesion("Exención de batería", estado.bateriaExenta, comprobable = true)
             if (estado.esXiaomi) {
                 LineaConcesion("Inicio automático (MIUI)", false, comprobable = false)
             }
 
             if (!estado.bateriaExenta) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
+                Spacer(modifier = Modifier.height(Tema.espaciado.medio))
+                BotonPrimario(
+                    texto = "Conceder exención de batería",
                     onClick = {
                         // Si el diálogo directo no existe en este dispositivo se
                         // cae a los ajustes de la app, en vez de no hacer nada:
@@ -117,27 +106,19 @@ fun ProtectionCard(protection: ProtectionStatus = koinInject()) {
                             runCatching { context.startActivity(protection.ajustesAppIntent()) }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
-                ) {
-                    Text(
-                        "Conceder exención de batería",
-                        color = DarkBg,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             if (estado.esXiaomi) {
                 val intentAutostart = remember { protection.autostartIntent() }
                 if (intentAutostart != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
+                    Spacer(modifier = Modifier.height(Tema.espaciado.pequeno))
+                    BotonSecundario(
+                        texto = "Abrir inicio automático",
                         onClick = { runCatching { context.startActivity(intentAutostart) } },
                         modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Abrir inicio automático", color = AccentOrange)
-                    }
+                    )
                 }
             }
         }
@@ -147,33 +128,34 @@ fun ProtectionCard(protection: ProtectionStatus = koinInject()) {
 @Composable
 private fun LineaConcesion(etiqueta: String, concedido: Boolean, comprobable: Boolean) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = Tema.espaciado.minimo),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Sin API para consultarlo, un tick verde sería una afirmación que no
         // podemos respaldar. El interrogante es la respuesta honesta, y además
         // le dice al participante que eso hay que mirarlo a mano.
-        Text(
-            when {
+        TextoDeEstado(
+            texto = when {
                 !comprobable -> "?"
                 concedido -> "✓"
                 else -> "✗"
             },
-            color = when {
-                !comprobable -> AccentOrange
-                concedido -> AccentGreen
-                else -> AccentRed
+            estado = when {
+                !comprobable -> EstadoVisual.AVISO
+                concedido -> EstadoVisual.EXITO
+                else -> EstadoVisual.ERROR
             },
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+            tamano = Tipos.cuerpo,
+            peso = FontWeight.SemiBold
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(etiqueta, color = TextPrimary, style = MaterialTheme.typography.bodySmall)
+        Spacer(modifier = Modifier.width(Tema.espaciado.pequeno))
+        Text(etiqueta, color = Tema.colores.textoPrimario, fontSize = Tipos.menor)
         if (!comprobable) {
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(Tema.espaciado.minimo))
             Text(
                 "no se puede comprobar",
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodySmall
+                color = Tema.colores.textoTerciario,
+                fontSize = Tipos.menor
             )
         }
     }
@@ -202,34 +184,30 @@ fun DeviceDiaryCard(eventos: IDeviceEventRepository = koinInject()) {
         )
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+    Tarjeta(Modifier.fillMaxWidth()) {
+        Column {
             Text(
                 "Diario del dispositivo",
-                color = TextPrimary,
-                style = MaterialTheme.typography.titleMedium
-                    .copy(fontWeight = FontWeight.Bold)
+                color = Tema.colores.textoPrimario,
+                fontSize = Tipos.subtitulo,
+                fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                if (revividos > 0)
+            Spacer(modifier = Modifier.height(Tema.espaciado.minimo))
+            TextoDeEstado(
+                texto = if (revividos > 0)
                     "El servicio tuvo que revivirse $revividos vez/veces en 24 h"
                 else
                     "El servicio no ha necesitado revivirse en 24 h",
-                color = if (revividos > 0) AccentOrange else TextSecondary,
-                style = MaterialTheme.typography.bodySmall
+                estado = if (revividos > 0) EstadoVisual.AVISO else EstadoVisual.NEUTRO,
+                tamano = Tipos.menor
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(Tema.espaciado.medio))
 
             if (lineas.isEmpty()) {
                 Text(
                     "Sin eventos registrados todavía.",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.bodySmall
+                    color = Tema.colores.textoTerciario,
+                    fontSize = Tipos.menor
                 )
                 return@Column
             }
@@ -238,39 +216,43 @@ fun DeviceDiaryCard(eventos: IDeviceEventRepository = koinInject()) {
                 SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault())
             }
             lineas.forEach { evento ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = Tema.espaciado.minimo)) {
                     Text(
                         formato.format(Date(evento.timestampMs)),
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.bodySmall
+                        color = Tema.colores.textoTerciario,
+                        fontSize = Tipos.menor
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(Tema.espaciado.pequeno))
                     Column {
-                        Text(
-                            evento.type.name,
-                            color = when (evento.type) {
+                        TextoDeEstado(
+                            texto = evento.type.name,
+                            estado = when (evento.type) {
                                 DeviceEventType.SERVICE_REVIVED,
-                                DeviceEventType.FL_FAILED -> AccentRed
+                                DeviceEventType.FL_FAILED -> EstadoVisual.ERROR
                                 DeviceEventType.SERVICE_STOPPED,
-                                DeviceEventType.GATE_REJECTED -> AccentOrange
-                                else -> AccentGreen
+                                DeviceEventType.GATE_REJECTED -> EstadoVisual.AVISO
+                                else -> EstadoVisual.EXITO
                             },
-                            style = MaterialTheme.typography.bodySmall
-                                .copy(fontWeight = FontWeight.Bold)
+                            tamano = Tipos.menor,
+                            peso = FontWeight.Medium
                         )
                         if (evento.detail.isNotBlank()) {
                             Text(
                                 evento.detail,
-                                color = TextSecondary,
-                                style = MaterialTheme.typography.bodySmall
+                                color = Tema.colores.textoSecundario,
+                                fontSize = Tipos.menor
                             )
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(Tema.espaciado.pequeno))
             TextButton(onClick = { expandido = !expandido }) {
-                Text(if (expandido) "Ver menos" else "Ver más", color = AccentCyan)
+                Text(
+                    if (expandido) "Ver menos" else "Ver más",
+                    color = Tema.colores.acentoTexto,
+                    fontSize = Tipos.cuerpo
+                )
             }
         }
     }

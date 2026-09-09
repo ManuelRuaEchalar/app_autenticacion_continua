@@ -31,6 +31,30 @@ import kotlinx.coroutines.launch
 class MonitorBloque(
     private val energia: FuenteEnergia,
     private val memoria: FuenteMemoria,
+    /**
+     * Régimen de visibilidad, muestreado junto a la energía y la memoria.
+     *
+     * Por defecto una fuente constante [EstadoPantalla.DESCONOCIDO], para que
+     * las pruebas que no lo ejercitan no tengan que inyectar un doble más. En
+     * la aplicación real lo provee el módulo de inyección con la
+     * implementación de Android.
+     */
+    private val estadoPantalla: FuenteEstadoPantalla =
+        FuenteEstadoPantalla { EstadoPantalla.DESCONOCIDO },
+    /**
+     * Método de medida que se EXIGE a cada bloque, o `null` para dejar la
+     * elección automática.
+     *
+     * Por defecto el del estudio. Es la pieza que hace comparables los dos
+     * terminales: sin ella, el que tiene mejor contador reportaría por contador
+     * y el otro por integración, y `ResumenRecursos.neto` se negaría a restar
+     * entre ellos. Ver [MetodoConsumo.DEL_ESTUDIO].
+     *
+     * `CaracterizacionRecursosTest` construye el monitor con `null` a
+     * propósito: ahí el objeto de estudio es justamente qué método sirve en un
+     * terminal nuevo, y forzar uno taparía la respuesta.
+     */
+    private val metodoExigido: MetodoConsumo? = MetodoConsumo.DEL_ESTUDIO,
     private val periodoMuestreoMs: Long = PERIODO_POR_DEFECTO_MS,
     private val alcance: CoroutineScope = CoroutineScope(Dispatchers.Default),
     /**
@@ -51,7 +75,8 @@ class MonitorBloque(
         cargaMicroAh = energia.cargaMicroAh(),
         corrienteMicroA = energia.corrienteMicroA(),
         pssKb = memoria.pssProcesoKb(),
-        cargando = energia.estaCargando()
+        cargando = energia.estaCargando(),
+        estadoPantalla = estadoPantalla.estado()
     )
 
     /**
@@ -81,7 +106,7 @@ class MonitorBloque(
         // Una muestra final tras cancelar: cierra el intervalo en el instante
         // real de parada y no en el último tic del muestreo.
         bloque.muestras += muestrear()
-        return ResumenRecursos.desde(etiqueta, bloque.muestras)
+        return ResumenRecursos.desde(etiqueta, bloque.muestras, metodoExigido)
     }
 
     /** Etiquetas de los bloques abiertos. Para diagnóstico y pruebas. */

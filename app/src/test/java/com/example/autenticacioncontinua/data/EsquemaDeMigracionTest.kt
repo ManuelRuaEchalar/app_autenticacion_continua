@@ -362,13 +362,13 @@ class EsquemaDeMigracionTest {
             ?: throw AssertionError("la tabla `$tabla` no esta en el esquema exportado")
 
     private companion object {
-        const val VERSION = 11
+        const val VERSION = 12
         const val RUTA =
-            "schemas/com.example.autenticacioncontinua.data.local.AppDatabase/11.json"
+            "schemas/com.example.autenticacioncontinua.data.local.AppDatabase/12.json"
 
         val TODAS: List<String> =
             AppDatabase.SQL_7_8 + AppDatabase.SQL_8_9 + AppDatabase.SQL_9_10 +
-                AppDatabase.SQL_10_11
+                AppDatabase.SQL_10_11 + AppDatabase.SQL_11_12
 
         /**
          * La ÚNICA tabla que una migración puede reescribir o destruir.

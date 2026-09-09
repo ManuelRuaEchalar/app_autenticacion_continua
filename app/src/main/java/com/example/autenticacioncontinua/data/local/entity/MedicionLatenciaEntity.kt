@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.autenticacioncontinua.monitoring.EstadisticaLatencia
+import com.example.autenticacioncontinua.monitoring.EstadoPantalla
 
 /**
  * Resumen estadístico de una serie de latencias.
@@ -40,6 +41,19 @@ data class MedicionLatenciaEntity(
     val minMs: Double,
     val maxMs: Double,
 
+    /**
+     * Regimen de visibilidad al que se ATRIBUYE la serie.
+     *
+     * OJO CON LA SEMANTICA, QUE NO ES LA MISMA QUE EN `mediciones_recursos`.
+     * Alli el estado se muestrea junto a cada lectura y el bloque queda MIXTO
+     * si cambia. Aqui las latencias se acumulan en el cronometro a lo largo de
+     * muchas operaciones y se vuelcan de golpe, de modo que el estado no se
+     * observa por operacion: lo declara quien vuelca. Durante una campana de
+     * medicion el estado es constante por protocolo y la atribucion es exacta;
+     * en uso libre hay que volcar con DESCONOCIDO en vez de inventar un valor.
+     */
+    val estadoPantalla: String,
+
     val tMs: Long
 ) {
     companion object {
@@ -47,6 +61,7 @@ data class MedicionLatenciaEntity(
             estadistica: EstadisticaLatencia,
             configSensores: String,
             regimenAprendizaje: String,
+            estadoPantalla: EstadoPantalla = EstadoPantalla.DESCONOCIDO,
             tMs: Long = System.currentTimeMillis()
         ) = MedicionLatenciaEntity(
             etiqueta = estadistica.etiqueta,
@@ -58,6 +73,7 @@ data class MedicionLatenciaEntity(
             p95Ms = estadistica.p95Ms,
             minMs = estadistica.minMs,
             maxMs = estadistica.maxMs,
+            estadoPantalla = estadoPantalla.name,
             tMs = tMs
         )
     }

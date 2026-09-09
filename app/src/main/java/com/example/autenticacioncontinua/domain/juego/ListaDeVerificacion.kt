@@ -45,6 +45,11 @@ data class Comprobacion(
  * como `?` y el diseño cruzado persona × dispositivo —la razón de ser de los dos
  * aparatos— no se puede analizar después.
  *
+ * Y el volumen de multimedia (31/08), desde que el teclado del estudio devuelve
+ * un chasquido por tecla. Vuelve a ser una comprobación de teclado, pero de las
+ * baratas: no configura un IME ajeno, sólo confirma que la respuesta del teclado
+ * propio se oye igual para todos.
+ *
  * Clase pura: se prueba en la JVM.
  */
 object ListaDeVerificacion {
@@ -54,6 +59,7 @@ object ListaDeVerificacion {
     const val BATERIA = "bateria"
     const val ETIQUETA = "etiqueta"
     const val PARTICIPANTE = "participante"
+    const val SONIDO = "sonido"
 
     /** Mínimo de batería para empezar, en porcentaje. */
     const val BATERIA_MINIMA = 40f
@@ -95,7 +101,20 @@ object ListaDeVerificacion {
         // se puede saber si es "el del protocolo": eso es una decisión escrita
         // en la carpeta del investigador, no un valor del sistema.
         Comprobacion(BRILLO, "Brillo fijo al valor del protocolo"),
-        Comprobacion(NO_MOLESTAR, "No molestar activado")
+        Comprobacion(NO_MOLESTAR, "No molestar activado"),
+        // El teclado del estudio devuelve un chasquido por tecla. El sonido lo
+        // pone la aplicación —un clip propio, idéntico en los dos terminales—,
+        // así que lo ÚNICO que queda del aparato es el volumen de multimedia.
+        //
+        // DICE «MULTIMEDIA» Y NO «SONIDO DE TOQUE», Y ESO IMPORTA. La primera
+        // versión de esta casilla pedía activar los sonidos de toque del
+        // sistema, y era una casilla IMPOSIBLE de cumplir: el chasquido salía
+        // entonces por STREAM_SYSTEM, que es precisamente el canal que No
+        // molestar silencia — y No molestar lo exige la casilla de arriba. Las
+        // dos comprobaciones se contradecían. Se arregló sacando el sonido de
+        // ese canal (ver `RetroalimentacionDeTecla`); esta casilla es lo que
+        // queda por comprobar a mano.
+        Comprobacion(SONIDO, "Volumen de multimedia al valor del protocolo (se oye el teclado)")
     )
 
     /**

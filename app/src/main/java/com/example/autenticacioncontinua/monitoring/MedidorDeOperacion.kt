@@ -31,7 +31,18 @@ class MedidorDeOperacion(
     private val monitor: MonitorBloque,
     private val cronometro: Cronometro,
     private val registro: IRegistroMediciones,
-    private val configSensores: String,
+    /**
+     * Qué configuración de sensores etiqueta cada fila.
+     *
+     * ES UNA FUNCIÓN Y NO UN VALOR, y la diferencia importa. Con un `String`
+     * inyectado, el medidor se quedaba con la configuración que hubiera al
+     * construirse —un `single` de Koin, o sea al arrancar la aplicación— y
+     * cambiarla a mitad de campaña no llegaba hasta aquí: las filas seguían
+     * saliendo con la anterior. Eso no falla ni avisa; produce filas plausibles
+     * y mal etiquetadas, que es peor. Consultándola en cada medición, la fila
+     * lleva la que de verdad estaba activa.
+     */
+    private val configSensores: () -> String,
     /** Ver la nota de `MonitorBloque.reloj`. Nanosegundos, monótono. */
     private val relojNanos: () -> Long = { android.os.SystemClock.elapsedRealtimeNanos() }
 ) {
@@ -94,7 +105,7 @@ class MedidorDeOperacion(
                 // la medición del bloque que sí llegó a correr se perdería.
                 withContext(NonCancellable) {
                     registro.registrarBloque(
-                        resumen!!, tipoOperacion, configSensores, regimenAprendizaje
+                        resumen!!, tipoOperacion, configSensores(), regimenAprendizaje
                     )
                 }
                 if (!resumen!!.esValida) {
@@ -114,10 +125,25 @@ class MedidorDeOperacion(
      * signifique nada, y guardar una fila por inferencia llenaría la tabla sin
      * añadir información.
      */
-    suspend fun volcarLatencias(regimenAprendizaje: String): Int {
+    suspend fun volcarLatencias(
+        regimenAprendizaje: String,
+        /**
+         * Régimen de visibilidad al que se ATRIBUYE la serie volcada.
+         *
+         * Se pasa y no se lee aquí a propósito. El cronómetro acumula a lo
+         * largo de muchas operaciones y se vuelca de golpe, así que leer el
+         * estado en este instante daría el que hubiera al final del volcado, no
+         * el que hubo mientras se medía: sería un valor con aspecto de dato y
+         * sin respaldo. Quien vuelca sí sabe bajo qué protocolo corrió —durante
+         * una campaña de medición el estado es constante por construcción— y es
+         * quien debe declararlo. En uso libre se deja [EstadoPantalla
+         * .DESCONOCIDO], que es la verdad.
+         */
+        estadoPantalla: EstadoPantalla = EstadoPantalla.DESCONOCIDO
+    ): Int {
         val resumenes = cronometro.resumenes()
         for (r in resumenes) {
-            registro.registrarLatencia(r, configSensores, regimenAprendizaje)
+            registro.registrarLatencia(r, configSensores(), regimenAprendizaje, estadoPantalla)
         }
         cronometro.limpiar()
         return resumenes.size
